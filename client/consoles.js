@@ -62,6 +62,7 @@ export function createConsoles(options) {
           s.state = "live";
           s.term.reset();
           s.back = 0;
+          anchor(s);
         } else if (note.error) {
           s.state = "failed";
           s.message = note.error;
@@ -74,6 +75,16 @@ export function createConsoles(options) {
       },
     }));
     changed(s);
+  }
+
+  // Marks the line at the top of a picture that is showing the history,
+  // so that it can be found again once more has been printed.
+  function anchor(s) {
+    if (s.mark) s.mark.dispose();
+    s.mark = null;
+    if (!s.back) return;
+    var buf = s.term.buffer.active;
+    s.mark = s.term.registerMarker(-s.back - buf.cursorY) || null;
   }
 
   function create(guest) {
@@ -98,9 +109,9 @@ export function createConsoles(options) {
       sel: null,
       dragging: false,
       // How many lines back from the newest the screen is showing, and
-      // how long the history was when that was last worked out.
+      // xterm's marker on the line at the top of that picture.
       back: 0,
-      base: 0,
+      mark: null,
     };
     // Whether a program hid the cursor is not in xterm's public state, so
     // watch the sequences that change it. Returning false lets xterm's own
@@ -122,6 +133,7 @@ export function createConsoles(options) {
       // Typing brings the newest lines back.
       if (s.back) {
         s.back = 0;
+        anchor(s);
         s.sel = null;
         changed(s);
       }
@@ -135,10 +147,11 @@ export function createConsoles(options) {
     term.onWriteParsed(function () {
       // What was selected has moved or gone.
       if (!s.dragging) s.sel = null;
-      // Lines being read further back stay where they are as more arrive.
-      var base = s.term.buffer.active.baseY;
-      if (s.back && base > s.base) s.back += base - s.base;
-      s.base = base;
+      // Lines being read further back stay where they are as more arrive,
+      // also once the history is full and its oldest lines are let go. A
+      // line that has been let go leaves the oldest one at the top.
+      var buf = s.term.buffer.active;
+      if (s.back && s.mark && buf.type !== "alternate") s.back = s.mark.line < 0 ? buf.baseY : Math.max(0, buf.baseY - s.mark.line);
       changed(s);
     });
     sessions[guest.vmid] = s;
@@ -316,7 +329,7 @@ export function createConsoles(options) {
       var to = Math.max(0, Math.min(buf.baseY, s.back + lines));
       if (to === s.back) return;
       s.back = to;
-      s.base = buf.baseY;
+      anchor(s);
       s.sel = null;
       s.dragging = false;
       changed(s);

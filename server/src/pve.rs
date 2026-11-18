@@ -357,9 +357,7 @@ impl Client {
                         "name": name,
                         "type": kind,
                         "node": text(row, "node"),
-                        // The page knows two states; a paused or suspended
-                        // guest still has its console.
-                        "status": if status == "stopped" { "stopped" } else { "running" },
+                        "status": shown_status(&status),
                         "cpu": field(row, "cpu"),
                         "maxcpu": field(row, "maxcpu"),
                         "mem": field(row, "mem"),
@@ -483,6 +481,16 @@ pub fn frame_resize(cols: u16, rows: u16) -> Vec<u8> {
 /// Keeps an idle console from being dropped.
 pub const FRAME_PING: &[u8] = b"2";
 
+/// The page knows two states. A paused or suspended guest still has its
+/// console, so it is running. A guest whose node cannot be reached is
+/// listed as `unknown`: nothing can be done with it, so it is stopped.
+fn shown_status(status: &str) -> &'static str {
+    match status {
+        "stopped" | "unknown" => "stopped",
+        _ => "running",
+    }
+}
+
 fn text(row: &Value, key: &str) -> String {
     row.get(key).and_then(Value::as_str).unwrap_or("").to_string()
 }
@@ -553,6 +561,14 @@ mod tests {
     #[test]
     fn a_ticket_survives_a_query_string() {
         assert_eq!(percent("PVEVNC:6A+b/c=="), "PVEVNC%3A6A%2Bb%2Fc%3D%3D");
+    }
+
+    #[test]
+    fn a_guest_on_an_unreachable_node_is_not_running() {
+        assert_eq!(shown_status("running"), "running");
+        assert_eq!(shown_status("paused"), "running");
+        assert_eq!(shown_status("stopped"), "stopped");
+        assert_eq!(shown_status("unknown"), "stopped");
     }
 
     #[test]

@@ -46,7 +46,7 @@ var LAMP_OFF = new Color(0.1, 0.055, 0.02);
 function reelGeometry(radius) {
   var parts = [
     [new CircleGeometry(radius, 40), [0.62, 0.64, 0.66], 0],
-    [new RingGeometry(radius * 0.4, radius * 0.82, 40), [0.16, 0.1, 0.07], 0.01],
+    [new RingGeometry(radius * 0.3, radius * 0.82, 40), [0.24, 0.14, 0.09], 0.01],
     [new CircleGeometry(radius * 0.3, 24), [0.78, 0.79, 0.8], 0.02],
   ];
   for (var h = 0; h < 3; h++) {
@@ -68,6 +68,56 @@ function reelGeometry(radius) {
     }
     g.dispose();
     part[0].dispose();
+  });
+  var out = new BufferGeometry();
+  out.setAttribute("position", new BufferAttribute(new Float32Array(positions), 3));
+  out.setAttribute("normal", new BufferAttribute(new Float32Array(normals), 3));
+  out.setAttribute("color", new BufferAttribute(new Float32Array(colors), 3));
+  return out;
+}
+
+// The tape's path across every deck, as one shape: off the pack wound on
+// one reel, down round a guide, across the head, and up to the other.
+function tapeGeometry(slots, M) {
+  var TAPE = [0.2, 0.12, 0.08];
+  var METAL = [0.7, 0.71, 0.72];
+  var HEAD = [0.12, 0.13, 0.14];
+  var positions = [];
+  var normals = [];
+  var colors = [];
+  // A flat strip from one point to another, this wide.
+  function strip(x0, y0, x1, y1, width, z, color) {
+    var dx = x1 - x0;
+    var dy = y1 - y0;
+    var length = Math.sqrt(dx * dx + dy * dy) || 1;
+    var nx = ((-dy / length) * width) / 2;
+    var ny = ((dx / length) * width) / 2;
+    var corners = [x0 - nx, y0 - ny, x1 - nx, y1 - ny, x1 + nx, y1 + ny, x0 - nx, y0 - ny, x1 + nx, y1 + ny, x0 + nx, y0 + ny];
+    for (var c = 0; c < 6; c++) {
+      positions.push(corners[c * 2], corners[c * 2 + 1], z);
+      normals.push(0, 0, 1);
+      colors.push(color[0], color[1], color[2]);
+    }
+  }
+  var pack = M.reelRadius * 0.82;
+  var guideX = M.reelApart * 0.5;
+  var guideY = -(M.deckHeight / 2 - 0.55);
+  var guideR = 0.13;
+  slots.forEach(function (slot) {
+    var cy = slot.top - M.deckTop - M.deckHeight / 2;
+    var z = slot.z + 0.09;
+    [-1, 1].forEach(function (side) {
+      // Where the tape leaves the pack: the lower of the two lines from the
+      // guide that just touch it.
+      var dx = side * (guideX - M.reelApart);
+      var dy = guideY;
+      var far = Math.sqrt(dx * dx + dy * dy);
+      var turn = Math.atan2(dy, dx) - side * Math.acos(Math.min(1, pack / far));
+      strip(slot.x + side * M.reelApart + Math.cos(turn) * pack, cy + Math.sin(turn) * pack, slot.x + side * guideX, cy + guideY - guideR, 0.07, z, TAPE);
+      strip(slot.x + side * guideX - guideR, cy + guideY, slot.x + side * guideX + guideR, cy + guideY, guideR * 2, z + 0.004, METAL);
+    });
+    strip(slot.x - guideX, cy + guideY - guideR, slot.x + guideX, cy + guideY - guideR, 0.07, z, TAPE);
+    strip(slot.x - 0.3, cy + guideY - guideR - 0.1, slot.x + 0.3, cy + guideY - guideR - 0.1, 0.3, z + 0.004, HEAD);
   });
   var out = new BufferGeometry();
   out.setAttribute("position", new BufferAttribute(new Float32Array(positions), 3));
@@ -109,6 +159,11 @@ export function createMachines(options) {
   reels.count = slots.length * 2;
   group.add(lamps);
   group.add(reels);
+  if (slots.length) {
+    var tapeGeo = tapeGeometry(slots, M);
+    owned.push(tapeGeo);
+    group.add(new Mesh(tapeGeo, reelMaterial));
+  }
 
   var matrix = new Matrix4();
   var one = new Vector3(1, 1, 1);

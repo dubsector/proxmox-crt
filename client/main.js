@@ -2,7 +2,7 @@
 // what each screen says, and hands that to the scene. The keypad and clicks
 // choose which guest the desk terminal shows.
 import { createDemoSource } from "./demo.js";
-import { createKeypad } from "./select.js";
+import { createKeypad, guardedKey } from "./select.js";
 import { createGrid } from "./gl/textgrid.js";
 import { wallCard, nodeCard, deskCard, WALL_COLS, WALL_ROWS, DESK_COLS, DESK_ROWS } from "./cards.js";
 import { createScene, wallLayout } from "./scene.js";
@@ -126,6 +126,9 @@ function flash(text, ms) {
 // monitor selected, the guard falls shut again.
 var ARMED_MS = 6000;
 var armedVmid = null;
+// Whether the guest was running when the guard was lifted, which is what
+// the readout said the switch would act on.
+var armedRunning = false;
 var armedTimer = 0;
 
 // Where the toggle was last thrown, until the guest has followed it or
@@ -161,6 +164,7 @@ function guardKey() {
   }
   var running = guest.status === "running";
   armedVmid = guest.vmid;
+  armedRunning = running;
   scene.setGuard(true);
   clearTimeout(armedTimer);
   armedTimer = setTimeout(function () {
@@ -175,6 +179,13 @@ function powerKey(cut) {
   var guest = current();
   if (!guest || armedVmid !== guest.vmid) return;
   var running = guest.status === "running";
+  // The guest started or stopped since the guard was lifted: the switch
+  // would no longer do what the readout said, so it does nothing.
+  if (running !== armedRunning) {
+    disarm();
+    flash("GUARD SHUT  " + label(guest) + " has " + (running ? "started" : "stopped") + " since   nothing was switched", 4000);
+    return;
+  }
   if (cut && !running) return;
   var action = running ? (cut ? "stop" : "shutdown") : "start";
   thrown = { vmid: guest.vmid, to: action === "start" ? "on" : "off", until: Date.now() + 30000 };
@@ -294,6 +305,10 @@ function build(snap) {
         keypad.pick(number);
       },
       onControl: switchKey,
+      // A right click holds the view still, and another lets it go.
+      onHold: function (held) {
+        flash(held ? "VIEW HELD  (right click lets it follow again)" : "VIEW FOLLOWS THE POINTER", held ? 2500 : 1200);
+      },
       // The wheel over the desk terminal's screen goes up and down what
       // the console has printed.
       onDeskWheel: function (down) {
@@ -363,6 +378,13 @@ function onSnapshot(snap) {
   if (scene) {
     var want = wallLayout(guests.length);
     if (want.columns !== scene.columns || want.rows !== scene.rows) {
+      // The old keypad goes with the old wall: a number waiting on it must
+      // not select anything later, and a guard left up shuts.
+      keypad.clear();
+      if (armedVmid !== null) {
+        disarm();
+        flash("GUARD SHUT  nothing was switched", 1500);
+      }
       scene.canvas.remove();
       scene.dispose();
       scene = null;
@@ -377,10 +399,16 @@ function onSnapshot(snap) {
   if (selectedVmid !== null) {
     var at = 0;
     for (var i = 0; i < guests.length; i++) if (guests[i].vmid === selectedVmid) at = i + 1;
-    if (at !== keypad.selected()) {
-      if (at && at <= scene.wallCount) keypad.pick(at);
-      else selectedVmid = null;
-    }
+    if (!at || at > scene.wallCount) {
+      // The guest is gone, or off the end of the wall. Its number now
+      // belongs to another guest, which nobody selected: select nothing.
+      if (consoles) {
+        if (!at) consoles.drop(selectedVmid);
+        consoles.blur();
+      }
+      selectedVmid = null;
+      keypad.clear();
+    } else if (at !== keypad.selected()) keypad.pick(at);
   }
   if (consoles) {
     // A stopped guest's console is gone; one just started has one now.
@@ -487,8 +515,14 @@ function switchKey(code) {
     guardKey();
     return true;
   }
-  if (armedVmid !== null && (code === "Power" || code === "NumpadEnter" || code === "NumpadDivide")) {
-    powerKey(code === "NumpadDivide");
+  // A digit, or Enter finishing a monitor number, is for the keypad
+  // below: the guard shuts and nothing is switched.
+  var guarded = armedVmid !== null ? guardedKey(code, keypad.entry() !== "") : null;
+  if (guarded === "shut") {
+    disarm();
+    flashText = "";
+  } else if (guarded) {
+    powerKey(guarded === "cut");
     return true;
   }
   if (code === "Power") return true;
