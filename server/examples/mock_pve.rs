@@ -151,6 +151,15 @@ impl Mock {
             }
         }
     }
+
+    /// Migrates a guest to another node.
+    pub fn move_to(&self, vmid: u64, node: &'static str) {
+        for g in self.guests.lock().unwrap().iter_mut() {
+            if g.vmid == vmid {
+                g.node = node;
+            }
+        }
+    }
 }
 
 /// Serves the mock on `addr` (port 0 picks a free one) until dropped with
@@ -347,10 +356,17 @@ async fn vncwebsocket(
 async fn power(
     State(mock): State<Arc<Mock>>,
     headers: HeaderMap,
-    Path((node, _kind, vmid, action)): Path<(String, String, u64, String)>,
+    Path((node, kind, vmid, action)): Path<(String, String, u64, String)>,
 ) -> Response {
     if let Err(r) = allowed(&headers) {
         return r;
+    }
+    let here = |g: &Guest| g.vmid == vmid && g.kind == kind && g.node == node;
+    if !mock.guests.lock().unwrap().iter().any(here) {
+        return no(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("Configuration file 'nodes/{node}/{kind}/{vmid}.conf' does not exist"),
+        );
     }
     match action.as_str() {
         "start" => mock.set_running(vmid, true),

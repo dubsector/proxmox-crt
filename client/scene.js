@@ -31,6 +31,13 @@ import { createTube, DECAY_SLOW_S } from "./gl/tube.js";
 import { createBank, createCabinetGeometry, CABINET } from "./gl/bank.js";
 import { PHOSPHORS, GLASS_T, EMISSION_GAIN, faceHit } from "./gl/face.js";
 import { createMachines, MACHINE } from "./gl/machines.js";
+import { createControls } from "./gl/controls.js";
+import { createKeyboard } from "./gl/keyboard.js";
+import { createPanels, PANEL } from "./gl/panels.js";
+import { createLavaLamp } from "./gl/lavalamp.js";
+import { createBoards } from "./gl/boards.js";
+import { createProps } from "./gl/props.js";
+import { createCordSwitch } from "./gl/cordswitch.js";
 
 // Everything is in tube units (about 61 mm): the desk terminal's tube face
 // is 4 x 3 of them and sits at the origin, facing +Z.
@@ -45,17 +52,22 @@ var WALL_Z = -36;
 // showing over the top of the terminal from the seat.
 var WALL_BOTTOM_Y = 2.4;
 var DESK_Y = CABINET.bottom - 0.05;
-// The cabinets under the wall: how many stand either side of the terminal,
-// and how far from the middle the first begins (clear of the terminal as
-// seen from the seat).
 // The node monitors' strip above the keyboard: how big its sets are, how
 // far in front of the terminal they sit, and how far they lie back.
 var SIDE_SCALE = 0.34;
 var SIDE_GAP = 0.14;
 var SIDE_Z = 2.9;
 var SIDE_LEAN = 1.0;
-var MACHINES_A_SIDE = 2;
-var MACHINES_FROM = 13.4;
+// The cabinets under the wall: how many stand either side of the middle,
+// and how far from it the first begins. They run right across, behind the
+// terminal too, so the wall is not bare wherever the terminal is seen from.
+var MACHINES_A_SIDE = 4;
+var MACHINES_FROM = 0;
+// Beyond the monitors and the rack beside them, each way: a big board with
+// this many more cabinets under it, a last rack in the corner, and then the
+// side wall, with this many racks along it.
+var BOARD_MACHINES = 4;
+var SIDE_RACKS = 2;
 // Each wall picture is half the desk terminal's raster each way, and holds
 // 13 x 4 characters of the 9 x 14 ROM at three times its size: big enough
 // to read from the seat.
@@ -63,20 +75,34 @@ var WALL_W = RASTER.width / 2;
 var WALL_H = RASTER.height / 2;
 var WALL_TEXT_SCALE = 3;
 
-// Where the viewer's eye is, and the two ways of looking from it. Seated,
-// the whole wall and the terminal's screen under it are in view at once, so
-// nothing has to move to read one and pick from the other. Looking down
-// brings the keyboard up into the frame.
+// Where the viewer's eye is, and the views it can be sent to by name.
+// Seated, the whole wall and the terminal's screen under it are in view at
+// once, so nothing has to move to read one and pick from the other. Looking
+// down brings the keyboard up into the frame, and turning to a side brings
+// the switches on that side of the desk.
 var EYE = new Vector3(0, 2.8, 9);
 var VIEW = {
-  seat: { pitch: -6, fov: 44 },
-  keys: { pitch: -21, fov: 44 },
+  seat: { pitch: -6, fov: 45 },
+  keys: { pitch: -29, fov: 44 },
 };
-var VIEW_EASE_S = 0.28;
-// The pointer in the bottom of the window looks down at the keys; above
-// the second line it looks back up. Between them the view stays where it is.
-var LOOK_DOWN_BELOW = 0.88;
-var LOOK_UP_ABOVE = 0.72;
+// The view is the viewer's to move: dragging turns the head, this far
+// either way and this far up and down (degrees), and it stays where it is
+// left.
+var LOOK_YAW_MAX = 85;
+// How far the head turns to follow the pointer to the edge of the window
+// (degrees), and what share of that a pointer near the middle gets: little,
+// so that pointing at a monitor does not send it away.
+var FOLLOW = { yaw: 52, up: 24, down: 50, middle: 0.3 };
+// The closest the wheel closes in, as a share of the seat's lens, and how
+// fast it goes for the wheel's travel.
+var ZOOM_MIN = 0.2;
+var ZOOM_RATE = 0.0016;
+// Locked on the terminal, the eye comes forward to sit square in front of
+// its screen, which then fills the window, and the view holds still.
+var DESK_EYE = new Vector3(0, 0.3, 6.6);
+var DESK_HALF = { w: 2.35, h: 1.78 };
+var LOOK_PITCH_MIN = -70;
+var LOOK_PITCH_MAX = 35;
 
 // How long a set stays dark between switching off and coming back with a
 // different kind of picture, and how far apart the wall's sets come on.
@@ -109,12 +135,15 @@ function slab(w, h, d, x, y, z, material) {
 // options: { guests: how many wall monitors are wanted, nodes: how many
 // node monitors on the desk, reducedMotion, always: draw every frame,
 // onPick(number), onHover(number or 0), onDeskPress({ col, row }) (return
-// true to follow the drag), onDeskDrag({ col, row }), onDeskRelease() }
+// true to follow the drag), onDeskDrag({ col, row }), onDeskRelease(),
+// onDeskWheel(1 down or -1 up): the wheel over the desk terminal's screen,
+// onControl(code): a keypad key clicked, or the dial turned a notch (which
+// is the keypad's + or -) }
 export function createScene(options) {
   var layout = wallLayout(options.guests);
   var wallCount = layout.columns * layout.rows;
   // A cabinet for each node, as far as there are cabinets.
-  var nodeCount = Math.min(options.nodes || 0, MACHINES_A_SIDE * 2);
+  var nodeCount = Math.min(options.nodes || 0, 4);
   var reduced = !!options.reducedMotion;
 
   var canvas = document.createElement("canvas");
@@ -143,16 +172,24 @@ export function createScene(options) {
   var wallW = layout.columns * PITCH_X;
   var wallH = layout.rows * PITCH_Y;
   var wallMidY = WALL_BOTTOM_Y + ((layout.rows - 1) * PITCH_Y) / 2;
+  // Where the gear beyond the monitors starts and ends, out from the middle.
+  var rackX = wallW / 2 + 0.8 + 0.3 + PANEL.width / 2;
+  var rackTop = wallMidY + wallH / 2 + 0.75;
+  var boardFrom = rackX + PANEL.width / 2 + 0.3;
+  var boardW = BOARD_MACHINES * MACHINE.width;
+  var cornerX = boardFrom + boardW + 0.3 + PANEL.width / 2;
+  var sideWallX = cornerX + PANEL.width / 2 + 0.3;
   var room = [
     // Back wall and floor.
     slab(260, 120, 1, 0, 30, WALL_Z - 6, plaster),
     slab(260, 1, 160, 0, -16, -20, floorMat),
+    slab(1, 120, 160, -(sideWallX + PANEL.depth + 0.3), 30, -20, plaster),
+    slab(1, 120, 160, sideWallX + PANEL.depth + 0.3, 30, -20, plaster),
     // The rack the monitors sit in, and the plinth under it.
     slab(wallW + 1.6, wallH + 1.6, 3.6, 0, wallMidY - 0.05, WALL_Z - 2.4, steel),
     slab(wallW + 1.6, WALL_BOTTOM_Y + 16 - PITCH_Y / 2 - 0.8, 3.0, 0, (WALL_BOTTOM_Y - PITCH_Y / 2 - 0.8 - 16) / 2, WALL_Z - 2.7, steel),
-    // The desk, and the terminal's keyboard on it.
+    // The desk.
     slab(34, 0.7, 13, 0, DESK_Y - 0.35, 0.5, wood),
-    slab(7.6, 0.4, 2.9, 0, DESK_Y + 0.2, 4.6, cream),
   ];
   room.forEach(function (m) {
     scene.add(m);
@@ -205,8 +242,55 @@ export function createScene(options) {
       slots.push({ x: side * (MACHINES_FROM + MACHINE.width / 2 + out * MACHINE.width), top: WALL_BOTTOM_Y - PITCH_Y / 2 - 1.0, z: WALL_Z + 0.2 });
     }
   });
+  // More cabinets under the boards; these have no node and idle.
+  [-1, 1].forEach(function (side) {
+    for (var k = 0; k < BOARD_MACHINES; k++) {
+      slots.push({ x: side * (boardFrom + MACHINE.width / 2 + k * MACHINE.width), top: WALL_BOTTOM_Y - PITCH_Y / 2 - 1.0, z: WALL_Z + 0.2 });
+    }
+  });
   var machines = createMachines({ slots: slots, still: reduced });
   scene.add(machines.group);
+
+  // Either side of the wall stands a rack of firing-room gear: a clock, a
+  // board of status lamps, meters and a scope. The left one's meters are
+  // the nodes' processors and the right one's their memory. Another stands
+  // in each corner.
+  var panels = createPanels({
+    racks: [
+      { x: -rackX, top: rackTop, z: WALL_Z + 0.2, clock: "gmt", label: "GMT" },
+      { x: rackX, top: rackTop, z: WALL_Z + 0.2, clock: "elapsed", label: "ELAPSED" },
+      { x: -cornerX, top: rackTop, z: WALL_Z + 0.2, clock: "local", label: "LOCAL" },
+      { x: cornerX, top: rackTop, z: WALL_Z + 0.2, clock: "gmt", label: "GMT" },
+    ],
+    still: reduced,
+  });
+  scene.add(panels.group);
+
+  // Between them, over the further cabinets, are the big boards: a
+  // tracking chart to the left and the nodes' load to the right. A row of
+  // lit signs runs along the top of everything.
+  var boardH = rackTop - (WALL_BOTTOM_Y - PITCH_Y / 2 - 1.0) - 0.3;
+  var boards = createBoards({
+    track: { x: -(boardFrom + boardW / 2), y: rackTop - boardH / 2, z: WALL_Z + 0.2, width: boardW - 0.4, height: boardH },
+    trend: { x: boardFrom + boardW / 2, y: rackTop - boardH / 2, z: WALL_Z + 0.2, width: boardW - 0.4, height: boardH },
+    nodes: nodeCount,
+    signs: { y: rackTop + 1.35, z: WALL_Z + 0.2, width: (sideWallX + PANEL.depth) * 2, height: 2 },
+    still: reduced,
+  });
+  scene.add(boards.group);
+
+  // The side walls, each with racks along it, facing in.
+  var sideRacks = [-1, 1].map(function (side) {
+    var racks = [];
+    for (var k = 0; k < SIDE_RACKS; k++) {
+      racks.push({ x: side * (WALL_Z + 0.6 + PANEL.width / 2 + k * (PANEL.width + 0.3)), top: rackTop, z: 0, clock: k ? "elapsed" : "gmt", label: k ? "ELAPSED" : "GMT" });
+    }
+    var along = createPanels({ racks: racks, still: reduced });
+    along.group.position.x = side * (sideWallX - 0.2);
+    along.group.rotation.y = (-side * Math.PI) / 2;
+    scene.add(along.group);
+    return along;
+  });
 
   // Node monitors are a strip of small sets in a sloped panel between the
   // terminal and its keyboard, lying back to face whoever looks down at
@@ -223,6 +307,64 @@ export function createScene(options) {
       bank.place(wallCount + n, matrix.compose(where, lean, sideScale));
     }
   }
+
+  // The switcher: its box beside the terminal, where the seat can read it,
+  // and the keypad and dial on the desk to the right of the node monitors.
+  var controls = createControls({
+    deskY: DESK_Y,
+    box: { x: 5.2, z: -2.4, turn: -0.3 },
+    keypad: { x: 4.3, z: 1.5 },
+    dial: { x: 7.2, z: 1.5 },
+    lock: { x: -3.6, z: 1.9, turn: 0.12 },
+  });
+  scene.add(controls.group);
+
+  // Somebody's lava lamp, on the other side of the terminal from the box.
+  var lavaLamp = createLavaLamp({ x: -5.4, y: DESK_Y, z: -2.2, still: reduced });
+  scene.add(lavaLamp.group);
+
+  // What a shift leaves lying about, on the bare ends of the desk.
+  var props = createProps({
+    deskY: DESK_Y,
+    logbook: { x: -7.2, z: 3.4, turn: 0.22 },
+    mug: { x: -9.6, z: 1.2 },
+    headset: { x: 10.4, z: 3.6, turn: -0.5 },
+    lamp: { x: 14.6, z: -1.6, turn: 3.75 },
+  });
+  scene.add(props.group);
+
+  // Each lamp has a switch in its cord, lying on the desk in front of it.
+  var lavaSwitch = createCordSwitch({
+    x: -4.6,
+    y: DESK_Y,
+    z: -0.6,
+    turn: 0.35,
+    fromLamp: [[-5.25, -1.62]],
+    toWall: [
+      [-3.95, 0.25],
+      [-3.35, -0.7],
+      [-3.45, -3.4],
+      [-3.7, -6],
+    ],
+  });
+  var lampSwitch = createCordSwitch({
+    x: 12.7,
+    y: DESK_Y,
+    z: 0.9,
+    turn: -0.47,
+    fromLamp: [[13.55, -0.75]],
+    toWall: [
+      [11.75, 2.0],
+      [10.95, 0.7],
+      [11.2, -3.2],
+      [11.6, -6],
+    ],
+  });
+  scene.add(lavaSwitch.group, lampSwitch.group);
+
+  // The terminal's keyboard, in front of it.
+  var keyboard = createKeyboard({ x: 0, y: DESK_Y, z: 4.6, width: 7.6, material: cream });
+  scene.add(keyboard.group);
 
   // --- what is on each screen ----------------------------------------------
   // kind: "off" (a spare set), or any name for what it shows. A set that
@@ -325,12 +467,37 @@ export function createScene(options) {
   }
 
   // --- the view ------------------------------------------------------------
-  var lookDown = 0;
-  var lookDownGoal = 0;
-  var viewLock = null; // "seat" | "keys" | null: follow the pointer
-  var parallax = new Vector2(0, 0);
-  var parallaxGoal = new Vector2(0, 0);
+  // The head follows the pointer: the view turns toward wherever in the
+  // window the pointer is, a little near the middle and more toward the
+  // edges, so the whole room can be reached with nothing held down. The
+  // wheel closes in and backs off, and what it is closed in on stays so. A
+  // right click holds the view where it is, and another lets it go.
+  // Where the pointer is in the window, -1..1 each way (up is positive).
+  var pointer = { x: 0, y: 0, clientX: 0, clientY: 0, seen: false };
+  // How far closed in: 1 is the seat's own lens, ZOOM_MIN the closest.
+  var zoom = 1;
+  // What closing in at a point away from the middle has turned the view
+  // by, and what a finger has dragged it by (degrees).
+  var zoomOff = { yaw: 0, pitch: 0 };
+  var touchOff = { yaw: 0, pitch: 0 };
+  // The view held still: { yaw, pitch }, or null while it follows.
+  var seatHold = { yaw: 0, pitch: VIEW.seat.pitch };
+  var hold = reduced ? { yaw: seatHold.yaw, pitch: seatHold.pitch } : null;
+  var deskLock = false;
+  var deskNear = 0; // 0 at the seat .. 1 in front of the terminal
+  // The view as it is drawn, and the one it is easing to (degrees).
+  var cur = { yaw: 0, pitch: VIEW.seat.pitch, fov: VIEW.seat.fov };
+  var goal = { yaw: 0, pitch: VIEW.seat.pitch, fov: VIEW.seat.fov };
+  var settled = false;
   var target = new Vector3();
+  // Where the room's furnishing ends, as the eye sees it (degrees): the
+  // near end of the racks along the side walls, the top of the signs, and
+  // the desk's front edge.
+  var EDGE = {
+    side: (Math.atan2(sideWallX, EYE.z - (WALL_Z + 0.6 + SIDE_RACKS * (PANEL.width + 0.3))) * 180) / Math.PI + 2,
+    top: (Math.atan2(rackTop + 2.35 - EYE.y, EYE.z - WALL_Z) * 180) / Math.PI + 2,
+    bottom: (Math.atan2(DESK_Y - EYE.y, EYE.z - 7) * 180) / Math.PI + 2,
+  };
 
   function fovFor(view, aspect) {
     // In a narrow window the lens widens until the wall (or the terminal)
@@ -340,38 +507,145 @@ export function createScene(options) {
     return Math.max(view.fov, Math.min(need, 100));
   }
 
+  // How far the head turns for a pointer this far from the middle.
+  function follow(n) {
+    return n * (FOLLOW.middle + (1 - FOLLOW.middle) * n * n);
+  }
+
+  function setGoal() {
+    if (deskLock) {
+      var need = Math.max(DESK_HALF.h / DESK_EYE.z, DESK_HALF.w / DESK_EYE.z / camera.aspect);
+      goal.fov = (2 * Math.atan(need) * 180) / Math.PI;
+      goal.yaw = 0;
+      goal.pitch = (Math.atan2(-DESK_EYE.y, DESK_EYE.z) * 180) / Math.PI;
+      return;
+    }
+    goal.fov = fovFor(VIEW.seat, camera.aspect) * zoom;
+    // A selection being dragged across the terminal keeps the view still.
+    if (pressing) return;
+    // The bumpers: the view stops where its edge meets the end of the
+    // room's furnishing, so the further it is closed in the further it turns.
+    var halfV = goal.fov / 2;
+    var halfH = (Math.atan(Math.tan((halfV * Math.PI) / 180) * camera.aspect) * 180) / Math.PI;
+    var yawMax = Math.max(0, Math.min(LOOK_YAW_MAX, EDGE.side - halfH));
+    var pitchMax = Math.min(LOOK_PITCH_MAX, EDGE.top - halfV);
+    var pitchMin = Math.max(LOOK_PITCH_MIN, EDGE.bottom + halfV);
+    if (pitchMin > pitchMax) pitchMin = pitchMax = Math.max(pitchMax, Math.min(pitchMin, VIEW.seat.pitch));
+    var yaw;
+    var pitch;
+    if (hold) {
+      yaw = hold.yaw;
+      pitch = hold.pitch;
+    } else {
+      var level = Math.max(pitchMin, Math.min(pitchMax, VIEW.seat.pitch));
+      yaw = follow(pointer.x) * Math.min(FOLLOW.yaw, yawMax) + zoomOff.yaw + touchOff.yaw;
+      pitch = level + follow(pointer.y) * (pointer.y > 0 ? Math.min(FOLLOW.up, pitchMax - level) : Math.min(FOLLOW.down, level - pitchMin)) + zoomOff.pitch + touchOff.pitch;
+    }
+    goal.yaw = Math.max(-yawMax, Math.min(yawMax, yaw));
+    goal.pitch = Math.max(pitchMin, Math.min(pitchMax, pitch));
+    // What a bumper stopped is given up, so that coming back off it is
+    // felt at once.
+    if (hold) {
+      hold.yaw = goal.yaw;
+      hold.pitch = goal.pitch;
+    } else {
+      var spare = touching ? touchOff : zoomOff;
+      spare.yaw -= yaw - goal.yaw;
+      spare.pitch -= pitch - goal.pitch;
+    }
+  }
+
+  function setDeskLock(on) {
+    if (on === deskLock) return;
+    controls.setLock(on);
+    deskLock = on;
+    wake(1.5);
+  }
+
+  function setHold(to) {
+    hold = to;
+    // Let go, the view is the pointer's again, with nothing left over.
+    if (!hold) zoomOff.yaw = zoomOff.pitch = touchOff.yaw = touchOff.pitch = 0;
+    if (options.onHold) options.onHold(!!hold);
+    wake(1.5);
+  }
+
+  // Back to the seat's own view: nothing closed in on, nothing held.
+  function resetView() {
+    zoom = 1;
+    zoomOff.yaw = zoomOff.pitch = touchOff.yaw = touchOff.pitch = 0;
+    hold = reduced ? { yaw: seatHold.yaw, pitch: seatHold.pitch } : null;
+    wake(1.5);
+  }
+
   function aim() {
-    var k = lookDown * lookDown * (3 - 2 * lookDown);
-    var aspect = camera.aspect;
-    var pitch = VIEW.seat.pitch + (VIEW.keys.pitch - VIEW.seat.pitch) * k;
-    var fov = fovFor(VIEW.seat, aspect) + (fovFor(VIEW.keys, aspect) - fovFor(VIEW.seat, aspect)) * k;
-    if (camera.fov !== fov) {
-      camera.fov = fov;
+    if (camera.fov !== cur.fov) {
+      camera.fov = cur.fov;
       camera.updateProjectionMatrix();
     }
-    // The head drifts a little with the pointer.
-    camera.position.set(EYE.x + parallax.x * 0.35, EYE.y + parallax.y * 0.15, EYE.z);
-    var r = (pitch * Math.PI) / 180;
-    target.set(parallax.x * 0.1, EYE.y + Math.sin(r) * 10, EYE.z - Math.cos(r) * 10);
+    camera.position.copy(EYE);
+    if (deskNear) camera.position.lerp(DESK_EYE, deskNear * deskNear * (3 - 2 * deskNear));
+    var yaw = (cur.yaw * Math.PI) / 180;
+    var r = (cur.pitch * Math.PI) / 180;
+    target.set(camera.position.x + Math.sin(yaw) * Math.cos(r) * 10, camera.position.y + Math.sin(r) * 10, camera.position.z - Math.cos(yaw) * Math.cos(r) * 10);
     camera.lookAt(target);
+  }
+
+  // Closes in (`by` below 1) or backs off (above 1), keeping what is under
+  // the pointer under it as the picture grows.
+  function zoomBy(ev, by) {
+    var was = zoom;
+    var next = Math.max(ZOOM_MIN, Math.min(1, zoom * by));
+    if (next === was || pressing) return;
+    zoom = next;
+    var rect = canvas.getBoundingClientRect();
+    var nx = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+    var ny = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+    var wide = fovFor(VIEW.seat, camera.aspect);
+    var t0 = Math.tan((wide * was * Math.PI) / 360);
+    var t1 = Math.tan((wide * next * Math.PI) / 360);
+    var dyaw = ((Math.atan(nx * t0 * camera.aspect) - Math.atan(nx * t1 * camera.aspect)) * 180) / Math.PI;
+    var dpitch = ((Math.atan(ny * t0) - Math.atan(ny * t1)) * 180) / Math.PI;
+    if (hold) {
+      hold.yaw += dyaw;
+      hold.pitch += dpitch;
+    } else if (next === 1) {
+      // Right back, the seat's lens is the seat's view.
+      zoomOff.yaw = zoomOff.pitch = 0;
+    } else {
+      // The view should turn by just that much. How far it follows the
+      // pointer changes with the lens too, so that is taken out again.
+      zoom = was;
+      setGoal();
+      var yaw = goal.yaw + dyaw;
+      var pitch = goal.pitch + dpitch;
+      zoom = next;
+      setGoal();
+      zoomOff.yaw += yaw - goal.yaw;
+      zoomOff.pitch += pitch - goal.pitch;
+    }
+    wake(1.5);
   }
 
   function stepView(dt) {
     var moving = false;
-    var goal = viewLock === "keys" ? 1 : viewLock === "seat" ? 0 : lookDownGoal;
-    if (lookDown !== goal) {
-      if (reduced) lookDown = goal;
-      else {
-        lookDown += (goal - lookDown) * (1 - Math.exp(-dt / VIEW_EASE_S));
-        if (Math.abs(goal - lookDown) < 0.002) lookDown = goal;
-      }
+    var nearGoal = deskLock ? 1 : 0;
+    if (deskNear !== nearGoal) {
+      deskNear = reduced || Math.abs(nearGoal - deskNear) < 0.002 ? nearGoal : deskNear + (nearGoal - deskNear) * (1 - Math.exp(-dt / 0.22));
       moving = true;
     }
-    if (!reduced && parallax.distanceToSquared(parallaxGoal) > 1e-6) {
-      parallax.lerp(parallaxGoal, 1 - Math.exp(-dt / 0.35));
+    setGoal();
+    var off = Math.abs(goal.yaw - cur.yaw) + Math.abs(goal.pitch - cur.pitch) + Math.abs(goal.fov - cur.fov);
+    if (off) {
+      var k = reduced || off < 0.01 ? 1 : 1 - Math.exp(-dt / (deskLock || deskNear ? 0.16 : 0.1));
+      cur.yaw += (goal.yaw - cur.yaw) * k;
+      cur.pitch += (goal.pitch - cur.pitch) * k;
+      cur.fov += (goal.fov - cur.fov) * k;
       moving = true;
     }
     aim();
+    // The room has moved under a pointer that has not.
+    if (moving && pointer.seen && !pressing && !touching) hover(pointer);
     return moving;
   }
 
@@ -382,6 +656,13 @@ export function createScene(options) {
     renderer.setSize(w, h, false);
     camera.aspect = w / Math.max(h, 1);
     camera.updateProjectionMatrix();
+    setGoal();
+    if (!settled || reduced) {
+      settled = true;
+      cur.yaw = goal.yaw;
+      cur.pitch = goal.pitch;
+      cur.fov = goal.fov;
+    }
     aim();
     wake(0.3);
   }
@@ -389,7 +670,9 @@ export function createScene(options) {
   // --- pointer -------------------------------------------------------------
   var raycaster = new Raycaster();
   var ndc = new Vector2();
-  var pickable = [bank.faces, bank.cabinets, tube.mesh, deskCabinet].concat(room);
+  var lavaPicks = lavaSwitch.pickables.concat(lavaLamp.pickables);
+  var lampPicks = lampSwitch.pickables.concat(props.lampPickables);
+  var pickable = [bank.faces, bank.cabinets, tube.mesh, deskCabinet].concat(room, controls.pickables, lavaPicks, lampPicks);
 
   // The wall monitor number under a point of the window, or 0. The ray is
   // tested against the whole room, so the terminal in front of a monitor
@@ -429,14 +712,76 @@ export function createScene(options) {
   // A press on the desk terminal's screen and the drag that follows it are
   // a selection of its text, which is the page's business.
   var pressing = false;
+  // A finger down: where it began and last was, and whether it has moved
+  // far enough to be a drag of the view and not a tap.
+  var touching = null;
+  function track(ev) {
+    if (ev.pointerType === "touch") return;
+    var rect = canvas.getBoundingClientRect();
+    pointer.x = Math.max(-1, Math.min(1, ((ev.clientX - rect.left) / rect.width) * 2 - 1));
+    pointer.y = Math.max(-1, Math.min(1, -((ev.clientY - rect.top) / rect.height) * 2 + 1));
+    pointer.clientX = ev.clientX;
+    pointer.clientY = ev.clientY;
+    pointer.seen = true;
+  }
   function onUp(ev) {
+    if (touching && ev.pointerId === touching.id) {
+      var tap = !touching.moved && ev.type === "pointerup";
+      var at = { clientX: touching.startX, clientY: touching.startY };
+      touching = null;
+      if (canvas.hasPointerCapture && canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
+      if (tap) press(at);
+      return;
+    }
     if (!pressing) return;
     pressing = false;
     if (canvas.hasPointerCapture && canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
     if (options.onDeskRelease) options.onDeskRelease();
   }
 
+  // The key a click here would press: one of the keypad's, or the dial's
+  // next and previous. Null anywhere else.
+  function controlAt(ev, hovering) {
+    var rect = canvas.getBoundingClientRect();
+    ndc.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    var hits = raycaster.intersectObjects(pickable, false);
+    if (!hits.length) return null;
+    // The plate under the dial takes the wheel, though a click on it does nothing.
+    if (lavaPicks.indexOf(hits[0].object) >= 0) return "LavaLamp";
+    if (lampPicks.indexOf(hits[0].object) >= 0) return "DeskLamp";
+    return controls.codeAt(hits[0]) || (hovering && controls.onDial(hits[0]) ? "dial" : null);
+  }
+
+  // The wheel over the dial turns it, a notch at a time; over the
+  // terminal's screen it is the terminal's; anywhere else it closes in on
+  // what is under the pointer, or backs off.
+  var lastNotch = 0;
+  function onWheel(ev) {
+    ev.preventDefault();
+    if (!ev.deltaY) return;
+    track(ev);
+    var rect = canvas.getBoundingClientRect();
+    ndc.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    var hits = raycaster.intersectObjects(pickable, false);
+    var dial = hits.length > 0 && controls.onDial(hits[0]);
+    if (dial || deskCellAt(ev)) {
+      if (ev.timeStamp - lastNotch < 70) return;
+      lastNotch = ev.timeStamp;
+      if (dial) {
+        if (options.onControl) options.onControl(ev.deltaY > 0 ? "NumpadAdd" : "NumpadSubtract");
+      } else if (options.onDeskWheel) options.onDeskWheel(ev.deltaY > 0 ? 1 : -1);
+      return;
+    }
+    if (deskLock) return;
+    // A notch of a wheel is about 100; a trackpad sends many small ones.
+    var delta = ev.deltaY * (ev.deltaMode === 1 ? 33 : ev.deltaMode === 2 ? 300 : 1);
+    zoomBy(ev, Math.exp(Math.max(-300, Math.min(300, delta)) * ZOOM_RATE));
+  }
+
   var hovered = 0;
+  var overControl = false;
   function onMove(ev) {
     if (pressing) {
       var cell = deskCellAt(ev);
@@ -444,33 +789,128 @@ export function createScene(options) {
       wake(1);
       return;
     }
-    var fy = ev.clientY / Math.max(window.innerHeight, 1);
-    var fx = ev.clientX / Math.max(window.innerWidth, 1);
-    if (fy > LOOK_DOWN_BELOW) lookDownGoal = 1;
-    else if (fy < LOOK_UP_ABOVE) lookDownGoal = 0;
-    parallaxGoal.set(fx * 2 - 1, 1 - fy * 2);
-    var over = monitorAt(ev);
-    if (over !== hovered) {
-      hovered = over;
-      canvas.style.cursor = over ? "pointer" : "";
-      if (options.onHover) options.onHover(over);
+    if (touching) {
+      if (ev.pointerId !== touching.id) return;
+      if (!touching.moved && Math.abs(ev.clientX - touching.startX) + Math.abs(ev.clientY - touching.startY) > 10) touching.moved = true;
+      if (touching.moved && !deskLock) {
+        // The scene is dragged, as a thing held: the head turns the other way.
+        var perPixel = cur.fov / Math.max(window.innerHeight, 1);
+        var to = hold || touchOff;
+        to.yaw = Math.max(-LOOK_YAW_MAX, Math.min(LOOK_YAW_MAX, to.yaw - (ev.clientX - touching.x) * perPixel));
+        to.pitch = Math.max(LOOK_PITCH_MIN, Math.min(LOOK_PITCH_MAX, to.pitch + (ev.clientY - touching.y) * perPixel));
+      }
+      touching.x = ev.clientX;
+      touching.y = ev.clientY;
+      return wake(1);
     }
+    track(ev);
+    hover(ev);
     wake(1);
   }
-  function onDown(ev) {
-    if (ev.button !== 0) return;
+  function hover(ev) {
     var over = monitorAt(ev);
-    if (over && options.onPick) return options.onPick(over);
+    var control = !over && !!controlAt(ev, true);
+    if (over !== hovered || control !== overControl) {
+      var was = hovered;
+      hovered = over;
+      overControl = control;
+      canvas.style.cursor = over || control ? "pointer" : "";
+      if (over !== was && options.onHover) options.onHover(over);
+    }
+  }
+  // Whether the terminal's case is what is under the pointer.
+  function caseAt(ev) {
+    var rect = canvas.getBoundingClientRect();
+    ndc.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    var hits = raycaster.intersectObjects(pickable, false);
+    return hits.length > 0 && hits[0].object === deskCabinet;
+  }
+  // A click or a tap: a monitor is picked, a control worked. True if it
+  // landed on either.
+  function press(ev) {
+    var over = monitorAt(ev);
+    if (over && options.onPick) {
+      options.onPick(over);
+      return true;
+    }
+    var code = controlAt(ev);
+    // The lamps' switches are the room's own business.
+    if (code === "LavaLamp" || code === "DeskLamp") {
+      if (code === "LavaLamp") {
+        lavaLamp.setOn(!lavaLamp.on());
+        lavaSwitch.set(lavaLamp.on());
+      } else {
+        props.setLamp(!props.lampOn());
+        lampSwitch.set(props.lampOn());
+      }
+      wake(2);
+      return true;
+    }
+    if (code && options.onControl) {
+      options.onControl(code);
+      return true;
+    }
+    // The terminal's own case: the view locks on to it, or lets go.
+    if (caseAt(ev) && options.onControl) {
+      options.onControl("Lock");
+      return true;
+    }
+    return false;
+  }
+  function onDown(ev) {
+    if (ev.pointerType === "touch") {
+      // A finger may be a tap or the start of a drag: which, is known when
+      // it lifts.
+      if (!touching) {
+        touching = { id: ev.pointerId, startX: ev.clientX, startY: ev.clientY, x: ev.clientX, y: ev.clientY, moved: false };
+        if (canvas.setPointerCapture) canvas.setPointerCapture(ev.pointerId);
+      }
+      return;
+    }
+    track(ev);
+    // The right button holds the view where it is, or lets it go.
+    if (ev.button === 2) {
+      ev.preventDefault();
+      // A room that keeps still stays held: there the right button drags
+      // the view round instead.
+      if (reduced && !deskLock) {
+        touching = { id: ev.pointerId, startX: ev.clientX, startY: ev.clientY, x: ev.clientX, y: ev.clientY, moved: true };
+        if (canvas.setPointerCapture) canvas.setPointerCapture(ev.pointerId);
+        return;
+      }
+      // Locked on the terminal, it lets go.
+      if (deskLock) {
+        if (options.onControl) options.onControl("Lock");
+        return;
+      }
+      setGoal();
+      return setHold(hold ? null : { yaw: goal.yaw, pitch: goal.pitch });
+    }
+    if (ev.button !== 0) return;
+    if (press(ev)) return;
     var cell = deskCellAt(ev);
     if (cell && options.onDeskPress && options.onDeskPress(cell)) {
       pressing = true;
       if (canvas.setPointerCapture) canvas.setPointerCapture(ev.pointerId);
     }
   }
+  function onMenu(ev) {
+    ev.preventDefault();
+  }
+  // Twice on nothing in particular: back to the seat's own view.
+  function onDouble(ev) {
+    if (deskLock || monitorAt(ev) || controlAt(ev) || deskCellAt(ev) || caseAt(ev)) return;
+    resetView();
+    if (options.onHold) options.onHold(!!hold);
+  }
+  canvas.addEventListener("contextmenu", onMenu);
+  canvas.addEventListener("dblclick", onDouble);
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerdown", onDown);
   canvas.addEventListener("pointerup", onUp);
   canvas.addEventListener("pointercancel", onUp);
+  canvas.addEventListener("wheel", onWheel, { passive: false });
   window.addEventListener("resize", layoutCanvas);
 
   // --- frames --------------------------------------------------------------
@@ -480,6 +920,14 @@ export function createScene(options) {
   function wake(seconds) {
     activeUntil = Math.max(activeUntil, performance.now() / 1000 + seconds);
   }
+
+  // A room that keeps still sleeps between changes, but its clocks must
+  // not stop: a frame a second keeps them right.
+  var tick = reduced
+    ? setInterval(function () {
+        wake(0.1);
+      }, 1000)
+    : 0;
 
   var lastTime = performance.now() / 1000;
   var dead = false;
@@ -505,6 +953,17 @@ export function createScene(options) {
     if (tube.update(dt)) moving = true;
     if (stepView(dt)) moving = true;
     if (machines.update(dt)) moving = true;
+    if (controls.update(dt, reduced)) moving = true;
+    if (keyboard.update(dt)) moving = true;
+    if (panels.update(dt)) moving = true;
+    if (boards.update(dt)) moving = true;
+    sideRacks.forEach(function (along) {
+      if (along.update(dt)) moving = true;
+    });
+    if (lavaLamp.update(dt)) moving = true;
+    if (props.update(dt, reduced)) moving = true;
+    if (lavaSwitch.update(dt, reduced)) moving = true;
+    if (lampSwitch.update(dt, reduced)) moving = true;
 
     // The terminal lighting the desk, following the phosphor rather than
     // the signal: it keeps giving light for a moment after the beam moves on.
@@ -545,19 +1004,57 @@ export function createScene(options) {
     // Puts an 80 x 25 grid on the desk terminal.
     showDesk: showDesk,
     // How hard node `number` is working (0..1, or -1 when it is down),
-    // which one cabinet's lamps and tape reels follow.
-    setNodeLoad: function (number, load) {
+    // which one cabinet's lamps and tape reels follow, and how full its
+    // memory is (0..1); each also has a meter in the racks beside the wall.
+    setNodeLoad: function (number, load, memory) {
       machines.setLoad(number - 1, load);
+      panels.setMeter(0, number - 1, Math.max(0, load));
+      boards.setLoad(number - 1, load);
+      panels.setMeter(1, number - 1, memory === undefined ? null : memory);
     },
     deskCellAt: deskCellAt,
+    controlAt: controlAt,
+    // The switcher: two characters on its readout; where its dial points
+    // (monitor `number` of `count`); the selected guest's power lamp ("on",
+    // "off" or null); and a keypad key going down.
+    setReadout: function (text) {
+      if (controls.setReadout(text)) wake(0.3);
+    },
+    setDial: function (number, count) {
+      controls.setDial(number, count);
+      wake(0.6);
+    },
+    setPower: function (power, thrown) {
+      controls.setPower(power, thrown);
+      wake(0.3);
+    },
+    // Lifts the guard over the power switch, or shuts it.
+    setGuard: function (open) {
+      controls.setGuard(open);
+      wake(0.6);
+    },
+    pressKey: function (code) {
+      controls.press(code);
+      wake(0.6);
+    },
+    // A key of the terminal's keyboard going down.
+    typeKey: function (code) {
+      if (keyboard.press(code)) wake(0.6);
+    },
     setSelected: setSelected,
-    // "seat" or "keys" holds that view; null goes back to following the pointer.
+    // "seat" gives the view back to the pointer, with nothing closed in on;
+    // "keys" turns the head down to the keyboard and holds it there; "desk"
+    // comes in close to the terminal and holds; null lets that go.
     setView: function (view) {
-      viewLock = view;
+      setDeskLock(view === "desk");
+      if (view === "seat") resetView();
+      else if (view === "keys") hold = { yaw: 0, pitch: VIEW.keys.pitch };
       wake(1.5);
     },
+    // "desk" while locked on the terminal; "held" while the view is held
+    // still; else "follow".
     view: function () {
-      return viewLock || (lookDownGoal ? "keys" : "seat");
+      return deskLock ? "desk" : hold ? "held" : "follow";
     },
     wake: wake,
     stats: function () {
@@ -582,14 +1079,29 @@ export function createScene(options) {
     dispose: function () {
       dead = true;
       cancelAnimationFrame(rafId);
+      if (tick) clearInterval(tick);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointercancel", onUp);
+      canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("contextmenu", onMenu);
+      canvas.removeEventListener("dblclick", onDouble);
       window.removeEventListener("resize", layoutCanvas);
       tube.dispose();
       bank.dispose();
       machines.dispose();
+      controls.dispose();
+      keyboard.dispose();
+      props.dispose();
+      panels.dispose();
+      boards.dispose();
+      sideRacks.forEach(function (along) {
+        along.dispose();
+      });
+      lavaLamp.dispose();
+      lavaSwitch.dispose();
+      lampSwitch.dispose();
       room.forEach(function (m) {
         m.geometry.dispose();
       });

@@ -213,3 +213,73 @@ body {
   min-height: 1.5em;
   color: #ffb000 !important;
 }
+
+/* Touch screens: a keypad to switch with, since they have no numpad, and
+   a word to anyone holding a phone upright, where the wall cannot fit. */
+#padToggle,
+#pad button {
+  font: 600 15px/1 ui-monospace, Menlo, Consolas, monospace;
+  color: #ffb26a;
+  background: rgba(20, 12, 8, 0.82);
+  border: 1px solid rgba(255, 120, 60, 0.55);
+  border-radius: 6px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#padToggle {
+  position: fixed;
+  right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  z-index: 6;
+  width: 52px;
+  height: 40px;
+}
+
+#pad {
+  position: fixed;
+  right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: calc(max(10px, env(safe-area-inset-bottom, 0px)) + 48px);
+  z-index: 6;
+  display: grid;
+  grid-template-columns: repeat(4, 44px);
+  gap: 5px;
+}
+
+#pad[hidden],
+#padToggle[hidden] {
+  display: none;
+}
+
+#pad button {
+  height: 40px;
+  padding: 0;
+}
+
+#pad button:active {
+  background: rgba(255, 120, 60, 0.4);
+}
+
+#pad button.wide {
+  grid-column: span 2;
+}
+
+#rotate {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  font: 600 18px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  color: #7dffa4;
+  background: #060807;
+}
+
+@media (orientation: portrait) and (pointer: coarse) {
+  #rotate {
+    display: flex;
+  }
+}

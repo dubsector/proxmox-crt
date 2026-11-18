@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createKeypad } from "../client/select.js";
+import { createKeypad, guardedKey } from "../client/select.js";
 
 function pad(count, columns) {
   var picked = [];
@@ -127,4 +127,44 @@ test("shrinking the wall drops a selection that no longer exists", function () {
   p.k.pick(40);
   p.k.resize(12, 4);
   assert.equal(p.k.selected(), 0);
+});
+
+test("clearing selects nothing and drops a number being typed", function () {
+  var p = pad(48);
+  p.k.pick(5);
+  p.k.key("Numpad7");
+  p.k.clear();
+  assert.equal(p.k.selected(), 0);
+  assert.equal(p.k.entry(), "");
+  assert.deepEqual(p.entries.at(-1), ["", false]);
+  // The pause that was pending must not select later.
+  p.pause();
+  assert.deepEqual(p.picked, [5]);
+  assert.equal(p.k.selected(), 0);
+});
+
+test("with the guard up, Enter throws the switch only with no number waiting", function () {
+  assert.equal(guardedKey("NumpadEnter", false), "throw");
+  assert.equal(guardedKey("NumpadEnter", true), "shut");
+  assert.equal(guardedKey("Power", false), "throw");
+  assert.equal(guardedKey("Power", true), "throw");
+  assert.equal(guardedKey("NumpadDivide", false), "cut");
+});
+
+test("with the guard up, a digit shuts it and other keys are not its business", function () {
+  assert.equal(guardedKey("Numpad7", false), "shut");
+  assert.equal(guardedKey("Numpad0", true), "shut");
+  assert.equal(guardedKey("NumpadAdd", false), null);
+  assert.equal(guardedKey("NumpadDecimal", false), null);
+  assert.equal(guardedKey("KeyA", false), null);
+});
+
+test("a digit typed with the guard up, then Enter, selects that monitor", function () {
+  var p = pad(48);
+  p.k.pick(5);
+  assert.equal(guardedKey("Numpad7", p.k.entry() !== ""), "shut");
+  p.k.key("Numpad7");
+  assert.equal(guardedKey("NumpadEnter", p.k.entry() !== ""), "shut");
+  p.k.key("NumpadEnter");
+  assert.equal(p.k.selected(), 7);
 });

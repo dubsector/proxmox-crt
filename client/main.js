@@ -2,7 +2,7 @@
 // what each screen says, and hands that to the scene. The keypad and clicks
 // choose which guest the desk terminal shows.
 import { createDemoSource } from "./demo.js";
-import { createKeypad } from "./select.js";
+import { createKeypad, guardedKey } from "./select.js";
 import { createGrid } from "./gl/textgrid.js";
 import { wallCard, nodeCard, deskCard, WALL_COLS, WALL_ROWS, DESK_COLS, DESK_ROWS } from "./cards.js";
 import { createScene, wallLayout } from "./scene.js";
@@ -111,14 +111,92 @@ function copy(text) {
 }
 
 // Says something on the readout for a moment.
-function flash(text) {
+function flash(text, ms) {
   flashText = text;
   clearTimeout(flashTimer);
   flashTimer = setTimeout(function () {
     flashText = "";
     drawReadout();
-  }, 1600);
+  }, ms || 1600);
   drawReadout();
+}
+
+// The power switch is under a guard: the first press lifts it and says
+// what the second will do; the second does it. Left alone, or with another
+// monitor selected, the guard falls shut again.
+var ARMED_MS = 6000;
+var armedVmid = null;
+// Whether the guest was running when the guard was lifted, which is what
+// the readout said the switch would act on.
+var armedRunning = false;
+var armedTimer = 0;
+
+// Where the toggle was last thrown, until the guest has followed it or
+// has plainly not: { vmid, to: "on" or "off", until }.
+var thrown = null;
+
+function disarm(after) {
+  if (armedVmid === null) return;
+  armedVmid = null;
+  clearTimeout(armedTimer);
+  // The cover drops a moment after the toggle is thrown, not with it.
+  setTimeout(function () {
+    if (scene && armedVmid === null) scene.setGuard(false);
+  }, after || 0);
+}
+
+function label(guest) {
+  return (guest.type === "qemu" ? "VM " : "CT ") + guest.vmid + " " + guest.name;
+}
+
+// Lifts the guard over the selected guest's power switch, or shuts it
+// again with nothing done.
+function guardKey() {
+  var guest = current();
+  if (armedVmid !== null) {
+    disarm();
+    flash("GUARD SHUT  nothing was switched", 1500);
+    return;
+  }
+  if (!guest || !source || !source.power) {
+    flash(guest ? "POWER  not available here" : "POWER  select a monitor first");
+    return;
+  }
+  var running = guest.status === "running";
+  armedVmid = guest.vmid;
+  armedRunning = running;
+  scene.setGuard(true);
+  clearTimeout(armedTimer);
+  armedTimer = setTimeout(function () {
+    disarm();
+  }, ARMED_MS);
+  flash("ARMED  " + (running ? "SHUT DOWN " : "START ") + label(guest) + "?   switch or numpad Enter: yes   " + (running ? "numpad /: cut power   " : "") + "numpad *: shut the guard", ARMED_MS);
+}
+
+// Throws the switch, which only moves with the guard up. `cut`: take a
+// running guest's power away instead of asking it to shut down.
+function powerKey(cut) {
+  var guest = current();
+  if (!guest || armedVmid !== guest.vmid) return;
+  var running = guest.status === "running";
+  // The guest started or stopped since the guard was lifted: the switch
+  // would no longer do what the readout said, so it does nothing.
+  if (running !== armedRunning) {
+    disarm();
+    flash("GUARD SHUT  " + label(guest) + " has " + (running ? "started" : "stopped") + " since   nothing was switched", 4000);
+    return;
+  }
+  if (cut && !running) return;
+  var action = running ? (cut ? "stop" : "shutdown") : "start";
+  thrown = { vmid: guest.vmid, to: action === "start" ? "on" : "off", until: Date.now() + 30000 };
+  disarm(550);
+  flash((action === "start" ? "STARTING " : action === "stop" ? "CUTTING POWER TO " : "SHUTTING DOWN ") + label(guest), 4000);
+  source.power(guest.vmid, action).then(function (answer) {
+    if (!answer.ok) {
+      thrown = null;
+      flash("POWER  " + answer.error, 5000);
+    }
+  });
 }
 
 function current() {
@@ -177,6 +255,10 @@ function drawReadout() {
   var n = keypad ? keypad.selected() : 0;
   var guest = n ? guests[n - 1] : null;
   var text;
+  if (armedVmid !== null && (!guest || guest.vmid !== armedVmid)) {
+    disarm();
+    flashText = "";
+  }
   if (flashText) text = flashText;
   else if (entryText) text = "MON " + entryText + "_";
   else if (entryBad) text = "MON --";
@@ -186,6 +268,14 @@ function drawReadout() {
       (consoles && guest.status === "running" ? (typing() ? "   console  (numpad . for figures)" : "   figures  (numpad . for console)") : "");
   else text = "MON --  type a number or click a screen";
   readout.textContent = text;
+  // The switcher box says the same in its own way.
+  if (scene) {
+    scene.setReadout(entryText ? (entryText + "_").slice(0, 2) : entryBad || !n ? "--" : String(n).padStart(2, "0"));
+    scene.setDial(n, Math.min(guests.length, scene.wallCount));
+    var power = guest ? (guest.status === "running" ? "on" : "off") : null;
+    if (thrown && (!guest || guest.vmid !== thrown.vmid || power === thrown.to || Date.now() > thrown.until)) thrown = null;
+    scene.setPower(power, thrown ? thrown.to : null);
+  }
 }
 
 function draw() {
@@ -198,7 +288,7 @@ function draw() {
     var node = snapshot.nodes[n];
     if (!node) scene.show(n + 1, null, "off", true);
     else scene.show(n + 1, nodeCard(wallGrid, node, snapshot.guests), node.status === "online" ? "live" : "offline", true);
-    if (node) scene.setNodeLoad(n + 1, node.status === "online" ? node.cpu : -1);
+    if (node) scene.setNodeLoad(n + 1, node.status === "online" ? node.cpu : -1, node.status === "online" && node.maxmem ? node.mem / node.maxmem : 0);
   }
   drawDesk();
   drawReadout();
@@ -213,6 +303,16 @@ function build(snap) {
       always: HUD,
       onPick: function (number) {
         keypad.pick(number);
+      },
+      onControl: switchKey,
+      // A right click holds the view still, and another lets it go.
+      onHold: function (held) {
+        flash(held ? "VIEW HELD  (right click lets it follow again)" : "VIEW FOLLOWS THE POINTER", held ? 2500 : 1200);
+      },
+      // The wheel over the desk terminal's screen goes up and down what
+      // the console has printed.
+      onDeskWheel: function (down) {
+        if (typing()) consoles.scroll(current().vmid, down * -3);
       },
       // Dragging across the desk terminal's screen selects its text, and
       // letting go copies it, as a terminal's own window does.
@@ -278,6 +378,13 @@ function onSnapshot(snap) {
   if (scene) {
     var want = wallLayout(guests.length);
     if (want.columns !== scene.columns || want.rows !== scene.rows) {
+      // The old keypad goes with the old wall: a number waiting on it must
+      // not select anything later, and a guard left up shuts.
+      keypad.clear();
+      if (armedVmid !== null) {
+        disarm();
+        flash("GUARD SHUT  nothing was switched", 1500);
+      }
       scene.canvas.remove();
       scene.dispose();
       scene = null;
@@ -292,10 +399,16 @@ function onSnapshot(snap) {
   if (selectedVmid !== null) {
     var at = 0;
     for (var i = 0; i < guests.length; i++) if (guests[i].vmid === selectedVmid) at = i + 1;
-    if (at !== keypad.selected()) {
-      if (at && at <= scene.wallCount) keypad.pick(at);
-      else selectedVmid = null;
-    }
+    if (!at || at > scene.wallCount) {
+      // The guest is gone, or off the end of the wall. Its number now
+      // belongs to another guest, which nobody selected: select nothing.
+      if (consoles) {
+        if (!at) consoles.drop(selectedVmid);
+        consoles.blur();
+      }
+      selectedVmid = null;
+      keypad.clear();
+    } else if (at !== keypad.selected()) keypad.pick(at);
   }
   if (consoles) {
     // A stopped guest's console is gone; one just started has one now.
@@ -323,7 +436,7 @@ function run(chosen) {
       // which hands the terminal the clipboard; Ctrl+Shift+C copies what
       // is selected.
       reserved: function (ev) {
-        return /^Numpad/.test(ev.code) || isPaste(ev) || isCopy(ev);
+        return /^Numpad/.test(ev.code) || ev.code === "ScrollLock" || isPaste(ev) || isCopy(ev);
       },
       onChange: function (vmid) {
         if (vmid !== selectedVmid) return;
@@ -390,9 +503,95 @@ window.addEventListener("focus", function () {
   if (typing()) consoles.focus(current().vmid);
 });
 
+// A key of the switcher, from the keyboard or from a click on the desk's
+// keypad or dial. True if it was one.
+function switchKey(code) {
+  if (!keypad || !scene) return false;
+  scene.pressKey(code);
+  // The guard over the power switch: a click on it, or the numpad's
+  // star, lifts it or shuts it. With it up, a click on the switch or the
+  // numpad's Enter throws the switch, and the numpad's slash cuts the power.
+  if (code === "Guard" || code === "NumpadMultiply") {
+    guardKey();
+    return true;
+  }
+  // A digit, or Enter finishing a monitor number, is for the keypad
+  // below: the guard shuts and nothing is switched.
+  var guarded = armedVmid !== null ? guardedKey(code, keypad.entry() !== "") : null;
+  if (guarded === "shut") {
+    disarm();
+    flashText = "";
+  } else if (guarded) {
+    powerKey(guarded === "cut");
+    return true;
+  }
+  if (code === "Power") return true;
+  // Scroll Lock, the numpad's slash or a click on the terminal's case
+  // brings the view in close to the terminal and holds it there.
+  if (code === "Lock" || code === "ScrollLock" || code === "NumpadDivide") {
+    var locked = scene.view() !== "desk";
+    scene.setView(locked ? "desk" : null);
+    flash(locked ? "TARGET LOCKED  (Scroll Lock or numpad / releases)" : "TARGET RELEASED", locked ? 3000 : 1200);
+    return true;
+  }
+  // The numpad's point flips the desk between the console and the figures.
+  if (code === "NumpadDecimal") {
+    if (consoles && current()) {
+      deskMode = deskMode === "console" ? "stats" : "console";
+      attach();
+      drawDesk();
+      drawReadout();
+    }
+    return true;
+  }
+  return keypad.key(code);
+}
+
+// A touch screen has no numpad, so it gets one on the page, behind a
+// button: the switcher's keys, the power switch, the lock, and a key that
+// brings up the device's own keyboard for the console.
+var PAD_KEYS = [
+  ["7", "Numpad7"], ["8", "Numpad8"], ["9", "Numpad9"], ["\u2212", "NumpadSubtract"],
+  ["4", "Numpad4"], ["5", "Numpad5"], ["6", "Numpad6"], ["+", "NumpadAdd"],
+  ["1", "Numpad1"], ["2", "Numpad2"], ["3", "Numpad3"], ["\u21b5", "NumpadEnter"],
+  ["0", "Numpad0"], [".", "NumpadDecimal"], ["GUARD", "NumpadMultiply"], ["LOCK", "Lock"],
+  ["KEYBOARD", "Keyboard", "wide"], ["SWITCH", "PowerArmed"], ["CUT", "NumpadDivideArmed"],
+];
+
+function buildPad() {
+  var touch = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+  if (!touch && !/[?&]pad=1/.test(location.search)) return;
+  var pad = document.getElementById("pad");
+  var toggle = document.getElementById("padToggle");
+  PAD_KEYS.forEach(function (key) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.textContent = key[0];
+    if (key[2]) button.className = key[2];
+    button.addEventListener("click", function () {
+      if (key[1] === "Keyboard") {
+        // The device's keyboard comes up for whatever has the focus.
+        if (typing()) consoles.focus(current().vmid);
+        else flash("KEYBOARD  select a running guest first");
+      } else if (key[1] === "NumpadDivideArmed" || key[1] === "PowerArmed") {
+        if (armedVmid !== null) switchKey(key[1] === "PowerArmed" ? "Power" : "NumpadDivide");
+        else flash("POWER  lift the guard first");
+      } else switchKey(key[1]);
+    });
+    pad.appendChild(button);
+  });
+  toggle.hidden = false;
+  toggle.addEventListener("click", function () {
+    pad.hidden = !pad.hidden;
+    toggle.setAttribute("aria-expanded", String(!pad.hidden));
+  });
+}
+buildPad();
+
 window.addEventListener("keydown", function (ev) {
+  if (scene) scene.typeKey(ev.code);
   if (!keypad) return;
-  var numpad = /^Numpad/.test(ev.code);
+  var numpad = /^Numpad/.test(ev.code) || ev.code === "ScrollLock";
   // While a console is on the desk, every key but the numpad is the guest's.
   if (typing() && isCopy(ev)) {
     copy(consoles.selectedText(current().vmid));
@@ -404,25 +603,14 @@ window.addEventListener("keydown", function (ev) {
     return;
   }
   if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
-  // The numpad's point flips the desk between the console and the figures.
-  if (ev.code === "NumpadDecimal") {
-    if (consoles && current()) {
-      deskMode = deskMode === "console" ? "stats" : "console";
-      attach();
-      drawDesk();
-      drawReadout();
-    }
-    ev.preventDefault();
-    return;
-  }
-  // Page Down holds the view on the keyboard and Page Up on the seat; Home
-  // lets it follow the pointer again.
+  // Page Down turns the view to the keyboard; Page Up and Home, back to
+  // the seat's.
   if (ev.code === "PageUp" || ev.code === "PageDown" || ev.code === "Home") {
-    scene.setView(ev.code === "PageUp" ? "seat" : ev.code === "PageDown" ? "keys" : null);
+    scene.setView(ev.code === "PageDown" ? "keys" : "seat");
     ev.preventDefault();
     return;
   }
-  if (keypad.key(ev.code)) ev.preventDefault();
+  if (switchKey(ev.code)) ev.preventDefault();
 });
 
 if (HUD) {

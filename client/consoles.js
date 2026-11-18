@@ -33,6 +33,7 @@ export function wrap(text, width) {
 
 // options: { source: has console(vmid, cols, rows, handlers), host: element
 // the hidden terminals live in, cols, rows, keep: how many stay attached,
+// history: how many lines are kept above the screen,
 // reserved(ev): keys the page keeps for itself, onChange(vmid): that
 // console's picture changed }
 export function createConsoles(options) {
@@ -60,6 +61,8 @@ export function createConsoles(options) {
         if (note.ready) {
           s.state = "live";
           s.term.reset();
+          s.back = 0;
+          anchor(s);
         } else if (note.error) {
           s.state = "failed";
           s.message = note.error;
@@ -74,11 +77,21 @@ export function createConsoles(options) {
     changed(s);
   }
 
+  // Marks the line at the top of a picture that is showing the history,
+  // so that it can be found again once more has been printed.
+  function anchor(s) {
+    if (s.mark) s.mark.dispose();
+    s.mark = null;
+    if (!s.back) return;
+    var buf = s.term.buffer.active;
+    s.mark = s.term.registerMarker(-s.back - buf.cursorY) || null;
+  }
+
   function create(guest) {
     var el = document.createElement("div");
     el.className = "console";
     options.host.appendChild(el);
-    var term = new Terminal({ cols: cols, rows: rows, scrollback: 0, cursorBlink: false });
+    var term = new Terminal({ cols: cols, rows: rows, scrollback: options.history === undefined ? 1000 : options.history, cursorBlink: false });
     term.open(el);
     var s = {
       vmid: guest.vmid,
@@ -95,6 +108,10 @@ export function createConsoles(options) {
       // reading order, both included.
       sel: null,
       dragging: false,
+      // How many lines back from the newest the screen is showing, and
+      // xterm's marker on the line at the top of that picture.
+      back: 0,
+      mark: null,
     };
     // Whether a program hid the cursor is not in xterm's public state, so
     // watch the sequences that change it. Returning false lets xterm's own
@@ -113,6 +130,13 @@ export function createConsoles(options) {
       return !(options.reserved && options.reserved(ev));
     });
     term.onData(function (data) {
+      // Typing brings the newest lines back.
+      if (s.back) {
+        s.back = 0;
+        anchor(s);
+        s.sel = null;
+        changed(s);
+      }
       if (s.state === "live") s.link.send(data);
       // A console that ended is opened again with Enter.
       else if ((s.state === "closed" || s.state === "failed") && data === "\r") connect(s);
@@ -123,6 +147,11 @@ export function createConsoles(options) {
     term.onWriteParsed(function () {
       // What was selected has moved or gone.
       if (!s.dragging) s.sel = null;
+      // Lines being read further back stay where they are as more arrive,
+      // also once the history is full and its oldest lines are let go. A
+      // line that has been let go leaves the oldest one at the top.
+      var buf = s.term.buffer.active;
+      if (s.back && s.mark && buf.type !== "alternate") s.back = s.mark.line < 0 ? buf.baseY : Math.max(0, buf.baseY - s.mark.line);
       changed(s);
     });
     sessions[guest.vmid] = s;
@@ -184,13 +213,14 @@ export function createConsoles(options) {
     var span = ordered(s.sel);
     if (!span || s.state === "opening" || s.state === "failed") return "";
     var buf = s.term.buffer.active;
+    var top = topOf(s);
     var first = Math.floor(span.from / cols);
     var last = Math.floor(span.to / cols);
     var out = "";
     for (var row = first; row <= last; row++) {
-      var line = buf.getLine(buf.baseY + row);
+      var line = buf.getLine(top + row);
       if (!line) continue;
-      var next = buf.getLine(buf.baseY + row + 1);
+      var next = buf.getLine(top + row + 1);
       var wraps = row < last && next && next.isWrapped;
       out += line.translateToString(!wraps, row === first ? span.from % cols : 0, row === last ? (span.to % cols) + 1 : cols);
       if (row < last && !wraps) out += "\n";
@@ -198,14 +228,23 @@ export function createConsoles(options) {
     return out;
   }
 
+  // The buffer line at the top of the picture: the screen's own first
+  // line, or one further back when the wheel has gone up the history.
+  function topOf(s) {
+    var buf = s.term.buffer.active;
+    if (s.back > buf.baseY) s.back = buf.baseY;
+    return buf.baseY - s.back;
+  }
+
   function screen(grid, s, blinkOn) {
     var buf = s.term.buffer.active;
+    var top = topOf(s);
     var cell = s.cell || (s.cell = buf.getNullCell());
     var w = Math.min(grid.cols, s.term.cols);
     var h = Math.min(grid.rows, s.term.rows);
     grid.clear();
     for (var row = 0; row < h; row++) {
-      var line = buf.getLine(buf.baseY + row);
+      var line = buf.getLine(top + row);
       if (!line) continue;
       for (var col = 0; col < w; col++) {
         line.getCell(col, cell);
@@ -228,10 +267,14 @@ export function createConsoles(options) {
     if (span) {
       for (var i = span.from; i <= span.to && i < grid.cols * h; i++) grid.attrs[i] ^= INVERSE;
     }
-    if (s.state === "live" && s.cursor && blinkOn && buf.cursorY < h) {
+    if (s.state === "live" && s.cursor && blinkOn && buf.cursorY + s.back < h) {
       // After printing into the last column the cursor waits one past it;
       // draw it on the last column, as xterm does.
-      grid.attrs[buf.cursorY * grid.cols + Math.min(buf.cursorX, w - 1)] ^= INVERSE;
+      grid.attrs[(buf.cursorY + s.back) * grid.cols + Math.min(buf.cursorX, w - 1)] ^= INVERSE;
+    }
+    if (s.back) {
+      var mark = " " + s.back + " LINES BACK ";
+      grid.put(grid.cols - mark.length, 0, mark, INVERSE);
     }
     if (s.state === "closed") {
       var text = " " + s.message + " Press Enter to open it again. ";
@@ -269,6 +312,27 @@ export function createConsoles(options) {
     },
     selectedText: function (vmid) {
       return sessions[vmid] ? selected(sessions[vmid]) : "";
+    },
+    // Moves the picture `lines` up the history (down, if negative). A
+    // full-screen program has no history; it is sent the arrow keys
+    // instead, as terminals do, so a pager or an editor still scrolls.
+    scroll: function (vmid, lines) {
+      var s = sessions[vmid];
+      if (!s || (s.state !== "live" && s.state !== "closed")) return;
+      var buf = s.term.buffer.active;
+      if (buf.type === "alternate") {
+        if (s.state !== "live") return;
+        var key = (s.term.modes.applicationCursorKeysMode ? "\x1bO" : "\x1b[") + (lines > 0 ? "A" : "B");
+        s.link.send(key.repeat(Math.abs(lines)));
+        return;
+      }
+      var to = Math.max(0, Math.min(buf.baseY, s.back + lines));
+      if (to === s.back) return;
+      s.back = to;
+      anchor(s);
+      s.sel = null;
+      s.dragging = false;
+      changed(s);
     },
     // Lets one go: its guest stopped or is gone.
     drop: drop,

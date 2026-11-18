@@ -149,8 +149,8 @@ export function deskCard(grid, state) {
 
   if (!running) {
     grid.put(2, 7, "This guest is not running.", BOLD);
-    grid.put(2, 9, "Its monitor on the wall shows OFFLINE. The power button on that monitor");
-    grid.put(2, 10, "will start it once power control is wired up.");
+    grid.put(2, 9, "Its monitor on the wall shows OFFLINE. To start it, lift the guard on the");
+    grid.put(2, 10, "switcher box (numpad *) and throw the switch (numpad Enter).");
     grid.put(2, 12, "Memory " + bytes(guest.maxmem) + "   cores " + guest.maxcpu + "   disk " + bytes(guest.maxdisk), DIM);
     return grid;
   }
