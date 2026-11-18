@@ -1,0 +1,61 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #08090a;
+  overflow: hidden;
+}
+
+#glCanvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+/* The switcher's readout. A stand-in for the two-digit display on the
+   switcher box, until the box is modelled. */
+#readout,
+#hud {
+  position: fixed;
+  z-index: 1;
+  left: 16px;
+  padding: 6px 10px;
+  font: 13px/1.2 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+  color: #ff5a3c;
+  background: rgba(12, 6, 5, 0.82);
+  border: 1px solid rgba(255, 90, 60, 0.35);
+  border-radius: 3px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+#readout {
+  bottom: 16px;
+}
+
+#hud {
+  top: 16px;
+  color: #9fb0a4;
+  border-color: rgba(159, 176, 164, 0.3);
+  background: rgba(8, 10, 9, 0.82);
+}
+
+#notice {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  font: 15px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  color: #6dff8d;
+  text-align: center;
+}
+
+#notice[hidden],
+#hud[hidden] {
+  display: none;
+}

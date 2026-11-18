@@ -1,0 +1,19 @@
+{
+  "name": "proxmox-crt",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A wall of CRT monitors for your Proxmox guests",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --serve",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
