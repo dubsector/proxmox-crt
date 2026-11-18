@@ -135,7 +135,7 @@ export function createLavaLamp(options) {
       place(time, heat);
       return true;
     },
-    // What takes a click, to switch it.
+    // What a click over the lamp lands on, and stops at.
     pickables: solid,
     setOn: function (to) {
       on = !!to;

@@ -42,9 +42,8 @@ terminal is a real terminal on whichever guest is selected. What works:
 - The terminal's keyboard on the desk, whose keys go down as you type; a
   lava lamp; and what a shift leaves lying about: a logbook and pen, a mug,
   a headset and a desk lamp, which is terminal's own. Each lamp has a switch
-  in its cord on the desk: click the switch, or the lamp, to turn it on or
-  off. The lava lamp's light goes out at once, but its wax goes by its
-  heat: it sinks and settles over a couple of minutes, and takes a minute to
+  in its cord on the desk: click the switch to turn it on or off. The lava
+  lamp's light goes out at once, but its wax goes by its heat: it sinks and settles over a couple of minutes, and takes a minute to
   get going again.
 - A strip of small node monitors between the terminal and its keyboard, one
   per node (up to four), with each node's CPU, memory and guest count. They
