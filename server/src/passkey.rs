@@ -186,7 +186,8 @@ pub(crate) async fn login_finish(
     let Some(asked) = asked.filter(|a| a.until > Instant::now()) else {
         return refuse(StatusCode::CONFLICT, "That took too long. Ask for the passkey again.");
     };
-    if !app.sessions.may_guess(from.ip()) {
+    let from = app.visitor(from.ip(), &headers);
+    if !app.sessions.may_guess(from) {
         return refuse(StatusCode::TOO_MANY_REQUESTS, "Too many wrong tries. Wait a minute.");
     }
     // The library checks the challenge, the address the browser signed
@@ -225,7 +226,7 @@ pub(crate) async fn login_finish(
             return no;
         }
     }
-    app.sessions.guessed_right(from.ip());
+    app.sessions.guessed_right(from);
     app.sessions.answered_right(&pending);
     app.let_in()
 }
@@ -255,7 +256,7 @@ pub(crate) async fn add_start(
         Ok(site) => site,
         Err(no) => return no,
     };
-    if let Err(no) = app.check_password(from.ip(), form.password).await {
+    if let Err(no) = app.check_password(app.visitor(from.ip(), &headers), form.password).await {
         return no;
     }
     let name = match form.name.trim() {
@@ -386,7 +387,7 @@ pub(crate) async fn remove(
     if let Err(no) = admit(&app, &headers) {
         return no;
     }
-    if let Err(no) = app.check_password(from.ip(), form.password).await {
+    if let Err(no) = app.check_password(app.visitor(from.ip(), &headers), form.password).await {
         return no;
     }
     let removed = app.change(|config| {

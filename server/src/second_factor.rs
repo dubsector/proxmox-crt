@@ -80,14 +80,15 @@ pub(crate) async fn login_totp(
     let Some(pending) = app.pending(&headers) else {
         return refuse(StatusCode::UNAUTHORIZED, crate::PASSWORD_AGAIN);
     };
-    if !app.sessions.may_guess(from.ip()) {
+    let from = app.visitor(from.ip(), &headers);
+    if !app.sessions.may_guess(from) {
         return refuse(StatusCode::TOO_MANY_REQUESTS, "Too many wrong tries. Wait a minute.");
     }
     match app.sessions.may_answer(&pending) {
         auth::Step::Go => {}
         refused => {
             // Nothing was looked at, so the address has not guessed.
-            app.sessions.guessed_right(from.ip());
+            app.sessions.guessed_right(from);
             return match refused {
                 auth::Step::Wait(secs) => refuse(
                     StatusCode::TOO_MANY_REQUESTS,
@@ -112,7 +113,7 @@ pub(crate) async fn login_totp(
         }
         return no;
     }
-    app.sessions.guessed_right(from.ip());
+    app.sessions.guessed_right(from);
     app.sessions.answered_right(&pending);
     app.let_in()
 }
@@ -173,7 +174,7 @@ pub(crate) async fn totp_start(
     let Some(session) = app.session(&headers) else {
         return refuse(StatusCode::UNAUTHORIZED, "Log in first.");
     };
-    if let Err(no) = app.check_password(from.ip(), form.password).await {
+    if let Err(no) = app.check_password(app.visitor(from.ip(), &headers), form.password).await {
         return no;
     }
     if app.config.read().unwrap().second_factor.totp_secret.is_some() {
@@ -265,7 +266,7 @@ pub(crate) async fn totp_remove(
     if let Err(no) = admit(&app, &headers) {
         return no;
     }
-    if let Err(no) = app.check_password(from.ip(), form.password).await {
+    if let Err(no) = app.check_password(app.visitor(from.ip(), &headers), form.password).await {
         return no;
     }
     let removed = app.change(|config| {
@@ -294,7 +295,7 @@ pub(crate) async fn recovery_renew(
     if let Err(no) = admit(&app, &headers) {
         return no;
     }
-    if let Err(no) = app.check_password(from.ip(), form.password).await {
+    if let Err(no) = app.check_password(app.visitor(from.ip(), &headers), form.password).await {
         return no;
     }
     let codes = totp::new_recovery_codes();
