@@ -1,0 +1,550 @@
+//! The Proxmox VE side: the REST API with an API token, and the console
+//! websocket a guest's terminal comes down.
+//!
+//! A Proxmox host signs its own certificate unless its owner set up ACME, so
+//! the usual chain check would refuse it. Instead of trusting everything,
+//! the bridge remembers the certificate's fingerprint from the setup card
+//! and accepts only that one.
+
+use crate::config;
+use futures_util::{SinkExt, StreamExt};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::{CryptoProvider, WebPkiSupportedAlgorithms};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::fmt;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::net::TcpStream;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::HeaderValue;
+use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
+
+const TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Debug)]
+pub struct Error(pub String);
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Error {}
+
+fn err(message: impl Into<String>) -> Error {
+    Error(message.into())
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+/// `AA:BB:...`, the form Proxmox shows under Node, System, Certificates.
+pub fn fingerprint(der: &[u8]) -> String {
+    Sha256::digest(der).iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":")
+}
+
+/// The same fingerprint however it was typed: any case, with or without
+/// colons or spaces.
+pub fn normalise_fingerprint(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .map(|c| c.to_ascii_uppercase())
+        .collect()
+}
+
+fn provider() -> Arc<CryptoProvider> {
+    Arc::new(rustls::crypto::ring::default_provider())
+}
+
+/// Accepts the one certificate whose fingerprint was pinned. With nothing
+/// pinned it accepts any, and notes which it was shown: that is how the
+/// setup card learns the fingerprint, and nothing secret is sent that way.
+#[derive(Debug)]
+struct Pin {
+    want: Option<String>,
+    seen: Mutex<Option<String>>,
+    algorithms: WebPkiSupportedAlgorithms,
+}
+
+impl ServerCertVerifier for Pin {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        let got = fingerprint(end_entity.as_ref());
+        match &self.want {
+            Some(want) if *want != normalise_fingerprint(&got) => Err(rustls::Error::General(format!(
+                "the host's certificate changed: its fingerprint is now {got}"
+            ))),
+            _ => {
+                *self.seen.lock().unwrap() = Some(got);
+                Ok(ServerCertVerified::assertion())
+            }
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.algorithms.supported_schemes()
+    }
+}
+
+fn tls_pinned(pin: Arc<Pin>) -> ClientConfig {
+    ClientConfig::builder_with_provider(provider())
+        .with_safe_default_protocol_versions()
+        .expect("the provider supports the default TLS versions")
+        .dangerous()
+        .with_custom_certificate_verifier(pin)
+        .with_no_client_auth()
+}
+
+fn tls_public() -> ClientConfig {
+    let mut roots = RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    ClientConfig::builder_with_provider(provider())
+        .with_safe_default_protocol_versions()
+        .expect("the provider supports the default TLS versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth()
+}
+
+fn http(tls: ClientConfig) -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .tls_backend_preconfigured(tls)
+        .timeout(TIMEOUT)
+        .connect_timeout(TIMEOUT)
+        .build()
+        .map_err(|e| err(format!("could not build the HTTP client: {e}")))
+}
+
+/// `https://host:8006`, from whatever was typed: a bare host, a host and
+/// port, or the address of the web interface.
+pub fn base_url(typed: &str) -> Result<String> {
+    let t = typed.trim().trim_end_matches('/');
+    if t.is_empty() {
+        return Err(err("the Proxmox address is empty"));
+    }
+    let rest = match t.split_once("://") {
+        Some(("https", rest)) => rest,
+        Some((scheme, _)) => return Err(err(format!("the Proxmox API is https, not {scheme}"))),
+        None => t,
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if host.is_empty() || host.contains('@') || host.chars().any(char::is_whitespace) {
+        return Err(err("that does not look like a host name or address"));
+    }
+    // An IPv6 address carries colons of its own; its port follows the bracket.
+    let has_port = match host.rfind(']') {
+        Some(end) => host[end..].contains(':'),
+        None => host.contains(':'),
+    };
+    Ok(if has_port {
+        format!("https://{host}")
+    } else {
+        format!("https://{host}:8006")
+    })
+}
+
+/// What the setup card needs to know about a host before it trusts it.
+#[derive(Debug, PartialEq)]
+pub enum Probe {
+    /// Its certificate chains to a public authority; no pin needed.
+    Public,
+    /// It signs its own; this is the fingerprint to compare and pin.
+    SelfSigned(String),
+}
+
+pub async fn probe(base: &str) -> Result<Probe> {
+    let url = format!("{base}/api2/json/version");
+    // No token goes with either request: a 401 is still an answer.
+    if http(tls_public())?.get(&url).send().await.is_ok() {
+        return Ok(Probe::Public);
+    }
+    let pin = Arc::new(Pin {
+        want: None,
+        seen: Mutex::new(None),
+        algorithms: provider().signature_verification_algorithms,
+    });
+    let outcome = http(tls_pinned(pin.clone()))?.get(&url).send().await;
+    let seen = pin.seen.lock().unwrap().clone();
+    match (seen, outcome) {
+        (Some(print), _) => Ok(Probe::SelfSigned(print)),
+        (None, Err(e)) => Err(err(format!("could not reach {base}: {}", root_cause(&e)))),
+        (None, Ok(_)) => Err(err(format!("{base} answered without a certificate"))),
+    }
+}
+
+fn root_cause(e: &dyn std::error::Error) -> String {
+    let mut cause = e;
+    while let Some(next) = cause.source() {
+        cause = next;
+    }
+    cause.to_string()
+}
+
+/// One guest or node, as far as the bridge itself needs to know it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Guest {
+    pub vmid: u64,
+    pub node: String,
+    /// `lxc` or `qemu`.
+    pub kind: String,
+}
+
+/// A reading of the cluster: the JSON the page is sent, and where each
+/// guest lives so a console can be opened on it.
+pub struct Reading {
+    pub snapshot: Value,
+    pub guests: Vec<Guest>,
+}
+
+pub type ConsoleStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+pub struct Client {
+    base: String,
+    auth: String,
+    http: reqwest::Client,
+    tls: Arc<ClientConfig>,
+}
+
+impl Client {
+    pub fn new(settings: &config::Proxmox) -> Result<Client> {
+        let base = base_url(&settings.url)?;
+        let tls = match &settings.fingerprint {
+            Some(print) => {
+                let want = normalise_fingerprint(print);
+                if want.len() != 64 {
+                    return Err(err("the certificate fingerprint should be 32 bytes of SHA-256"));
+                }
+                tls_pinned(Arc::new(Pin {
+                    want: Some(want),
+                    seen: Mutex::new(None),
+                    algorithms: provider().signature_verification_algorithms,
+                }))
+            }
+            None => tls_public(),
+        };
+        if settings.token_id.contains(['=', '\n', '\r']) || settings.token_secret.contains(['\n', '\r']) {
+            return Err(err("the API token has characters a token cannot have"));
+        }
+        Ok(Client {
+            auth: format!("PVEAPIToken={}={}", settings.token_id.trim(), settings.token_secret.trim()),
+            http: http(tls.clone())?,
+            tls: Arc::new(tls),
+            base,
+        })
+    }
+
+    async fn answer(&self, request: reqwest::RequestBuilder, what: &str) -> Result<Value> {
+        let response = request
+            .header("Authorization", &self.auth)
+            .send()
+            .await
+            .map_err(|e| err(format!("{what}: {}", root_cause(&e))))?;
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            // Proxmox puts the reason in the status line, and sometimes a
+            // longer one in the body.
+            let detail = serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|v| v.get("message").and_then(Value::as_str).map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .or_else(|| status.canonical_reason().map(String::from))
+                .unwrap_or_default();
+            return Err(err(match status.as_u16() {
+                401 => format!("{what}: Proxmox refused the API token ({detail})"),
+                403 => format!("{what}: the API token is not allowed to ({detail})"),
+                code => format!("{what}: Proxmox answered {code} {detail}"),
+            }));
+        }
+        let value: Value = serde_json::from_str(&body).map_err(|_| err(format!("{what}: the answer was not JSON")))?;
+        Ok(value.get("data").cloned().unwrap_or(Value::Null))
+    }
+
+    async fn get(&self, path: &str, what: &str) -> Result<Value> {
+        self.answer(self.http.get(format!("{}/api2/json{path}", self.base)), what).await
+    }
+
+    async fn post(&self, path: &str, form: &[(&str, &str)], what: &str) -> Result<Value> {
+        self.answer(self.http.post(format!("{}/api2/json{path}", self.base)).form(form), what)
+            .await
+    }
+
+    /// The Proxmox VE version, which is also the cheapest way to find out
+    /// whether the token works at all.
+    pub async fn version(&self) -> Result<String> {
+        let data = self.get("/version", "asking the version").await?;
+        Ok(data.get("version").and_then(Value::as_str).unwrap_or("?").to_string())
+    }
+
+    /// Every node and guest the token may see, in the shape the page draws.
+    pub async fn read(&self) -> Result<Reading> {
+        let data = self.get("/cluster/resources", "reading the cluster").await?;
+        let rows = data.as_array().cloned().unwrap_or_default();
+        let mut nodes = Vec::new();
+        let mut guests = Vec::new();
+        let mut refs = Vec::new();
+        for row in &rows {
+            match text(row, "type").as_str() {
+                "node" => {
+                    let name = text(row, "node");
+                    let online = text(row, "status") == "online";
+                    // The load average is not in the cluster listing. Without
+                    // Sys.Audit on the node it stays unknown.
+                    let load = if online {
+                        self.get(&format!("/nodes/{name}/status"), "reading a node")
+                            .await
+                            .ok()
+                            .and_then(|s| s.get("loadavg").cloned())
+                            .and_then(|l| l.as_array().map(|a| a.iter().map(number).collect::<Vec<f64>>()))
+                    } else {
+                        None
+                    };
+                    nodes.push(serde_json::json!({
+                        "node": name,
+                        "status": text(row, "status"),
+                        "cpu": field(row, "cpu"),
+                        "maxcpu": field(row, "maxcpu"),
+                        "mem": field(row, "mem"),
+                        "maxmem": field(row, "maxmem"),
+                        "disk": field(row, "disk"),
+                        "maxdisk": field(row, "maxdisk"),
+                        "uptime": field(row, "uptime"),
+                        "loadavg": load,
+                    }));
+                }
+                kind @ ("lxc" | "qemu") => {
+                    if field(row, "template") != 0.0 {
+                        continue;
+                    }
+                    let vmid = field(row, "vmid") as u64;
+                    let status = text(row, "status");
+                    let name = match text(row, "name") {
+                        n if n.is_empty() => format!("{kind}-{vmid}"),
+                        n => n,
+                    };
+                    guests.push(serde_json::json!({
+                        "vmid": vmid,
+                        "name": name,
+                        "type": kind,
+                        "node": text(row, "node"),
+                        // The page knows two states; a paused or suspended
+                        // guest still has its console.
+                        "status": if status == "stopped" { "stopped" } else { "running" },
+                        "cpu": field(row, "cpu"),
+                        "maxcpu": field(row, "maxcpu"),
+                        "mem": field(row, "mem"),
+                        "maxmem": field(row, "maxmem"),
+                        "disk": field(row, "disk"),
+                        "maxdisk": field(row, "maxdisk"),
+                        "netin": field(row, "netin"),
+                        "netout": field(row, "netout"),
+                        "uptime": field(row, "uptime"),
+                        "tags": text(row, "tags"),
+                    }));
+                    refs.push(Guest {
+                        vmid,
+                        node: text(row, "node"),
+                        kind: kind.to_string(),
+                    });
+                }
+                _ => {}
+            }
+        }
+        nodes.sort_by_key(|n| n["node"].as_str().unwrap_or("").to_string());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        Ok(Reading {
+            snapshot: serde_json::json!({ "t": now, "nodes": nodes, "guests": guests }),
+            guests: refs,
+        })
+    }
+
+    /// Opens the guest's terminal: the one `pct console` or a VM's serial
+    /// port gives, the same the Proxmox web interface shows as xterm.js.
+    pub async fn console(&self, guest: &Guest) -> Result<Console> {
+        let path = format!("/nodes/{}/{}/{}", guest.node, guest.kind, guest.vmid);
+        let proxy = self.post(&format!("{path}/termproxy"), &[], "opening the console").await?;
+        let port = number(proxy.get("port").unwrap_or(&Value::Null)) as u64;
+        let ticket = proxy.get("ticket").and_then(Value::as_str).unwrap_or("");
+        let user = proxy.get("user").and_then(Value::as_str).unwrap_or("");
+        if port == 0 || ticket.is_empty() {
+            return Err(err("opening the console: Proxmox gave no ticket"));
+        }
+
+        let wss = format!(
+            "wss{}/api2/json{path}/vncwebsocket?port={port}&vncticket={}",
+            self.base.trim_start_matches("https"),
+            percent(ticket)
+        );
+        let mut request = wss.into_client_request().map_err(|e| err(format!("opening the console: {e}")))?;
+        let headers = request.headers_mut();
+        headers.insert(
+            "Authorization",
+            HeaderValue::from_str(&self.auth).map_err(|_| err("the API token is not a header value"))?,
+        );
+        headers.insert("Sec-WebSocket-Protocol", HeaderValue::from_static("binary"));
+        let connect = tokio_tungstenite::connect_async_tls_with_config(request, None, true, Some(Connector::Rustls(self.tls.clone())));
+        let (mut stream, _) = tokio::time::timeout(TIMEOUT, connect)
+            .await
+            .map_err(|_| err("opening the console: Proxmox did not answer"))?
+            .map_err(|e| err(format!("opening the console: {}", root_cause(&e))))?;
+
+        // The terminal proxy wants the ticket once more, and says OK.
+        stream
+            .send(Message::binary(format!("{user}:{ticket}\n").into_bytes()))
+            .await
+            .map_err(|e| err(format!("opening the console: {e}")))?;
+        let mut early = Vec::new();
+        let greeted = tokio::time::timeout(TIMEOUT, async {
+            while early.len() < 2 {
+                match stream.next().await {
+                    Some(Ok(Message::Binary(b))) => early.extend_from_slice(&b),
+                    Some(Ok(Message::Text(t))) => early.extend_from_slice(t.as_bytes()),
+                    Some(Ok(Message::Close(_))) | None => return false,
+                    Some(Ok(_)) => {}
+                    Some(Err(_)) => return false,
+                }
+            }
+            true
+        })
+        .await
+        .unwrap_or(false);
+        if !greeted || !early.starts_with(b"OK") {
+            return Err(err("opening the console: the terminal proxy refused the ticket"));
+        }
+        early.drain(..2);
+        Ok(Console { stream, early })
+    }
+}
+
+/// An open terminal. What the guest prints arrives as it is; what is typed
+/// goes up inside the terminal proxy's small framing.
+pub struct Console {
+    pub stream: ConsoleStream,
+    /// Output that arrived along with the greeting.
+    pub early: Vec<u8>,
+}
+
+/// Typed bytes, framed.
+pub fn frame_input(bytes: &[u8]) -> Vec<u8> {
+    let mut out = format!("0:{}:", bytes.len()).into_bytes();
+    out.extend_from_slice(bytes);
+    out
+}
+
+/// A change of the terminal's size, framed.
+pub fn frame_resize(cols: u16, rows: u16) -> Vec<u8> {
+    format!("1:{cols}:{rows}:").into_bytes()
+}
+
+/// Keeps an idle console from being dropped.
+pub const FRAME_PING: &[u8] = b"2";
+
+fn text(row: &Value, key: &str) -> String {
+    row.get(key).and_then(Value::as_str).unwrap_or("").to_string()
+}
+
+fn field(row: &Value, key: &str) -> f64 {
+    row.get(key).map(number).unwrap_or(0.0)
+}
+
+/// Proxmox gives most numbers as numbers and a few as strings.
+fn number(v: &Value) -> f64 {
+    match v {
+        Value::Number(n) => n.as_f64().unwrap_or(0.0),
+        Value::String(s) => s.trim().parse().unwrap_or(0.0),
+        Value::Bool(b) => f64::from(u8::from(*b)),
+        _ => 0.0,
+    }
+}
+
+/// Percent-encodes everything but the unreserved characters. A ticket is
+/// full of `+`, `/`, `=` and `:`.
+fn percent(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_address_gets_the_scheme_and_port_it_was_typed_without() {
+        assert_eq!(base_url("192.168.1.10").unwrap(), "https://192.168.1.10:8006");
+        assert_eq!(base_url(" pve.lan:8006/ ").unwrap(), "https://pve.lan:8006");
+        assert_eq!(base_url("https://pve.lan/#v1:0:18:4").unwrap(), "https://pve.lan:8006");
+        assert_eq!(base_url("https://pve.example.com:443").unwrap(), "https://pve.example.com:443");
+        assert_eq!(base_url("[fd00::1]").unwrap(), "https://[fd00::1]:8006");
+        assert_eq!(base_url("[fd00::1]:8006").unwrap(), "https://[fd00::1]:8006");
+        assert!(base_url("http://pve.lan:8006").is_err());
+        assert!(base_url("").is_err());
+        assert!(base_url("user@pve.lan").is_err());
+    }
+
+    #[test]
+    fn a_fingerprint_is_the_same_however_it_is_typed() {
+        let print = fingerprint(b"certificate");
+        assert_eq!(print.len(), 32 * 3 - 1);
+        assert_eq!(
+            normalise_fingerprint(&print.to_lowercase()),
+            normalise_fingerprint(&print.replace(':', " "))
+        );
+        assert_eq!(normalise_fingerprint(&print).len(), 64);
+    }
+
+    #[test]
+    fn typing_and_resizing_are_framed_for_the_terminal_proxy() {
+        assert_eq!(frame_input(b"ls\r"), b"0:3:ls\r");
+        assert_eq!(frame_input("é".as_bytes()), b"0:2:\xc3\xa9");
+        assert_eq!(frame_resize(80, 25), b"1:80:25:");
+    }
+
+    #[test]
+    fn a_ticket_survives_a_query_string() {
+        assert_eq!(percent("PVEVNC:6A+b/c=="), "PVEVNC%3A6A%2Bb%2Fc%3D%3D");
+    }
+
+    #[test]
+    fn numbers_come_as_numbers_or_strings() {
+        assert_eq!(number(&serde_json::json!("0.25")), 0.25);
+        assert_eq!(number(&serde_json::json!(4)), 4.0);
+        assert_eq!(number(&Value::Null), 0.0);
+    }
+}

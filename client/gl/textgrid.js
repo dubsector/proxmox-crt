@@ -50,6 +50,71 @@ function gauge(on) {
   return g;
 }
 
+// Line-drawing characters, which a guest's programs frame things with:
+// which of the four arms (up, down, left, right) each has. The ROM here has
+// none, and a system font's would not meet from cell to cell, so they are
+// drawn: one dot wide, through the middle of the cell. Heavy and double
+// lines come out as single ones.
+var LINES = {};
+[
+  ["\u2500\u2501\u2550\u254c\u2504\u2508", "lr"],
+  ["\u2502\u2503\u2551\u254e\u2506\u250a", "ud"],
+  ["\u250c\u250f\u2554\u256d", "dr"],
+  ["\u2510\u2513\u2557\u256e", "dl"],
+  ["\u2514\u2517\u255a\u2570", "ur"],
+  ["\u2518\u251b\u255d\u256f", "ul"],
+  ["\u251c\u2523\u2560", "udr"],
+  ["\u2524\u252b\u2563", "udl"],
+  ["\u252c\u2533\u2566", "dlr"],
+  ["\u2534\u253b\u2569", "ulr"],
+  ["\u253c\u254b\u256c", "udlr"],
+].forEach(function (row) {
+  for (var i = 0; i < row[0].length; i++) LINES[row[0][i]] = row[1];
+});
+var MID_X = 4;
+var MID_Y = 7;
+function lines(arms) {
+  var g = new Uint8Array(FONT_W * FONT_H);
+  var x, y;
+  if (arms.indexOf("u") >= 0) for (y = 0; y <= MID_Y; y++) g[y * FONT_W + MID_X] = 1;
+  if (arms.indexOf("d") >= 0) for (y = MID_Y; y < FONT_H; y++) g[y * FONT_W + MID_X] = 1;
+  if (arms.indexOf("l") >= 0) for (x = 0; x <= MID_X; x++) g[MID_Y * FONT_W + x] = 1;
+  if (arms.indexOf("r") >= 0) for (x = MID_X; x < FONT_W; x++) g[MID_Y * FONT_W + x] = 1;
+  return g;
+}
+
+// Anything else the ROM lacks (accented letters, bullets, arrows) is drawn
+// once from a system font and thresholded to dots. No real character
+// generator worked like this, but it beats a blank. Outside a browser, and
+// for characters the font draws nothing for, there is no pattern.
+var drawCtx = null;
+function drawn(ch) {
+  if (typeof document === "undefined") return null;
+  if (!drawCtx) {
+    var c = document.createElement("canvas");
+    c.width = FONT_W;
+    c.height = FONT_H;
+    drawCtx = c.getContext("2d", { willReadFrequently: true });
+    if (!drawCtx) return null;
+    drawCtx.textBaseline = "alphabetic";
+    drawCtx.textAlign = "center";
+  }
+  drawCtx.clearRect(0, 0, FONT_W, FONT_H);
+  drawCtx.fillStyle = "#fff";
+  drawCtx.font = "11px monospace";
+  drawCtx.fillText(ch, (FONT_W - 1) / 2, 11);
+  var px = drawCtx.getImageData(0, 0, FONT_W, FONT_H).data;
+  var g = new Uint8Array(FONT_W * FONT_H);
+  var any = false;
+  for (var i = 0; i < g.length; i++) {
+    if (px[i * 4 + 3] > 96) {
+      g[i] = 1;
+      any = true;
+    }
+  }
+  return any ? g : null;
+}
+
 function glyphFor(ch) {
   var g = cache[ch];
   if (g) return g;
@@ -66,6 +131,10 @@ function glyphFor(ch) {
     g = gauge(ch === GAUGE_ON);
   } else if (code >= 0x2581 && code <= 0x2587) {
     g = eighths(code - 0x2580);
+  } else if (LINES[ch]) {
+    g = lines(LINES[ch]);
+  } else if ((g = drawn(ch))) {
+    // Rasterised from a system font, below.
   } else {
     // Not in the ROM: a small centred box, the way a terminal shows a
     // character it has no pattern for.
