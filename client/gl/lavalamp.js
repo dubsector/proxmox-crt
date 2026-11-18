@@ -24,11 +24,13 @@ export function createLavaLamp(options) {
   var wax = new MeshBasicMaterial({ color: new Color(1.0, 0.42, 0.12) });
   owned.push(metal, liquid, wax);
 
+  var solid = [];
   function add(geometry, material, y) {
     var m = new Mesh(geometry, material);
     m.position.y = y;
     owned.push(geometry);
     group.add(m);
+    solid.push(m);
     return m;
   }
 
@@ -57,32 +59,89 @@ export function createLavaLamp(options) {
   light.position.y = L.baseH + L.glassH * 0.45;
   group.add(light);
 
-  function place(t) {
-    blobs.forEach(function (blob) {
+  // The wax goes by its heat, 0 cold .. 1 hot, which follows the bulb
+  // slowly. Hot wax is lighter than the liquid and rises; at the top it
+  // cools, and sinks. As the lamp cools the blobs slow, stop climbing and
+  // settle one by one into the pool at the bottom, the smallest last; and
+  // from cold the pool has to warm through before the first one lifts off.
+  function place(t, heat) {
+    var settled = 0;
+    blobs.forEach(function (blob, b) {
       // Up one side of a slow cycle and down the other, lingering at the ends.
       var f = 0.5 - 0.5 * Math.cos(((t + blob.phase * 7) / blob.period) * Math.PI * 2);
       f = f * f * (3 - 2 * f);
-      var h = 0.14 + f * 0.74;
+      // How far this blob still floats: each needs its own warmth to.
+      var needs = 0.18 + 0.1 * (b % 3) + 0.05 * b;
+      var floats = Math.max(0, Math.min(1, (heat - needs) / 0.3));
+      floats = floats * floats * (3 - 2 * floats);
+      settled += 1 - floats;
+      var h = 0.06 + (0.08 + f * 0.74) * floats;
       var room = L.glassLow + (L.glassHigh - L.glassLow) * h - blob.size - 0.03;
       var a = t * 0.11 * blob.sway + blob.phase;
-      blob.mesh.position.set(Math.cos(a) * Math.max(0, room) * 0.6, L.baseH + h * L.glassH, Math.sin(a) * Math.max(0, room) * 0.6);
-      // Wax stretches as it moves and rounds off where it rests.
-      var stretch = 1 + 0.45 * Math.sin(f * Math.PI);
+      blob.mesh.position.set(Math.cos(a) * Math.max(0, room) * 0.6 * floats, L.baseH + h * L.glassH, Math.sin(a) * Math.max(0, room) * 0.6 * floats);
+      // Wax stretches as it moves and rounds off where it rests; cold, it
+      // slumps into the pool.
+      var stretch = 1 + 0.45 * Math.sin(f * Math.PI) * floats;
       var w = Math.min(blob.size, Math.max(0.06, room + blob.size));
-      blob.mesh.scale.set(w / Math.sqrt(stretch), blob.size * stretch, w / Math.sqrt(stretch));
+      var slump = 0.55 + 0.45 * floats;
+      blob.mesh.scale.set((w / Math.sqrt(stretch)) / Math.sqrt(slump), blob.size * stretch * slump, (w / Math.sqrt(stretch)) / Math.sqrt(slump));
     });
+    // The pool is deeper for the wax that has come back to it.
+    pool.scale.y = 0.16 + 0.05 * settled;
+    pool.position.y = L.baseH + 0.06 + pool.scale.y * 0.4;
   }
   var time = 40;
-  place(time);
+
+  // Switched off, the light goes at once; the wax takes its time.
+  var LIT = { liquid: new Color(0.5, 0.1, 0.42), wax: new Color(1.0, 0.42, 0.12) };
+  var DARK = { liquid: new Color(0.1, 0.04, 0.1), wax: new Color(0.3, 0.12, 0.05) };
+  // A real one takes an hour to get going and as long to stop; this one
+  // warms through in about a minute and cools in two.
+  var WARM_S = 20;
+  var COOL_S = 35;
+  var on = true;
+  var level = 1;
+  var heat = 1;
+  place(time, heat);
+  function show() {
+    liquid.color.copy(DARK.liquid).lerp(LIT.liquid, level);
+    wax.color.copy(DARK.wax).lerp(LIT.wax, level);
+    light.intensity = 2.2 * level;
+  }
 
   return {
     group: group,
     // Moves the wax on by dt seconds. True while it is moving.
     update: function (dt) {
-      if (options.still) return false;
-      time += dt;
-      place(time);
+      var goal = on ? 1 : 0;
+      var moving = false;
+      if (level !== goal) {
+        level = options.still || Math.abs(goal - level) < 0.003 ? goal : level + (goal - level) * (1 - Math.exp(-dt / 0.12));
+        show();
+        moving = true;
+      }
+      if (options.still) {
+        if (heat !== goal) {
+          heat = goal;
+          place(time, heat);
+        }
+        return moving;
+      }
+      if (heat !== goal) heat = Math.abs(goal - heat) < 0.002 ? goal : heat + (goal - heat) * (1 - Math.exp(-dt / (on ? WARM_S : COOL_S)));
+      // Cold through and dark, nothing in it moves.
+      if (!heat && !on) return moving;
+      // Cooler wax is stiffer and slower.
+      time += dt * (0.25 + 0.75 * heat);
+      place(time, heat);
       return true;
+    },
+    // What takes a click, to switch it.
+    pickables: solid,
+    setOn: function (to) {
+      on = !!to;
+    },
+    on: function () {
+      return on;
     },
     dispose: function () {
       owned.forEach(function (o) {

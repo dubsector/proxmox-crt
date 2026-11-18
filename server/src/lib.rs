@@ -9,7 +9,7 @@ pub mod config;
 pub mod pve;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path as UrlPath, Query, State};
+use axum::extract::{ConnectInfo, Path as UrlPath, Query, State};
 use axum::http::header::{CACHE_CONTROL, COOKIE, HOST, ORIGIN, SET_COOKIE};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -18,10 +18,11 @@ use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use tokio::sync::{Notify, watch};
+use tokio::sync::{Notify, Semaphore, watch};
 use tokio_tungstenite::tungstenite::Message as Upstream;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -38,6 +39,9 @@ pub struct App {
     config: RwLock<config::Config>,
     pve: RwLock<Option<Arc<pve::Client>>>,
     sessions: auth::Sessions,
+    /// Checking a password takes a while and some memory on purpose, so
+    /// only this many are checked at a time and the rest wait their turn.
+    hashing: Semaphore,
     /// Proves that whoever fills in the setup card can also read the
     /// bridge's log, so is the one who installed it.
     setup_code: String,
@@ -73,6 +77,7 @@ impl App {
             config: RwLock::new(config),
             pve: RwLock::new(pve),
             sessions: auth::Sessions::new(),
+            hashing: Semaphore::new(2),
             setup_code: format!("{}-{}", &code[..4], &code[4..]),
             feed: watch::channel(Arc::from("")).0,
             guests: RwLock::new(Vec::new()),
@@ -128,6 +133,9 @@ pub async fn poll(app: Arc<App>) {
     }
 }
 
+/// The routes. Logging in and setting up count guesses by the address they
+/// come from, so this has to be served the way `serve` does, with
+/// `into_make_service_with_connect_info::<SocketAddr>()`.
 pub fn router(app: Arc<App>, client_dir: PathBuf) -> Router {
     let header = |name: &'static str, value: &'static str| {
         SetResponseHeaderLayer::if_not_present(HeaderName::from_static(name), HeaderValue::from_static(value))
@@ -150,9 +158,8 @@ pub fn router(app: Arc<App>, client_dir: PathBuf) -> Router {
 /// Serves until the process is told to stop.
 pub async fn serve(app: Arc<App>, client_dir: PathBuf, listener: tokio::net::TcpListener) -> std::io::Result<()> {
     tokio::spawn(poll(app.clone()));
-    axum::serve(listener, router(app, client_dir))
-        .with_graceful_shutdown(stop_signal())
-        .await
+    let routes = router(app, client_dir).into_make_service_with_connect_info::<SocketAddr>();
+    axum::serve(listener, routes).with_graceful_shutdown(stop_signal()).await
 }
 
 async fn stop_signal() {
@@ -213,7 +220,12 @@ struct Setup {
     fingerprint: Option<String>,
 }
 
-async fn setup(State(app): State<Arc<App>>, headers: HeaderMap, Json(form): Json<Setup>) -> Response {
+async fn setup(
+    State(app): State<Arc<App>>,
+    ConnectInfo(from): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(form): Json<Setup>,
+) -> Response {
     if !same_origin(&headers) {
         return refuse(StatusCode::FORBIDDEN, "That request came from another site.");
     }
@@ -223,17 +235,17 @@ async fn setup(State(app): State<Arc<App>>, headers: HeaderMap, Json(form): Json
             "This bridge is already set up. To start over, delete its settings file and restart it.",
         );
     }
-    if !app.sessions.may_guess() {
+    if !app.sessions.may_guess(from.ip()) {
         return refuse(StatusCode::TOO_MANY_REQUESTS, "Too many wrong tries. Wait a minute.");
     }
     let typed: String = form.code.trim().to_ascii_uppercase();
     if !auth::same(&typed, &app.setup_code) {
-        app.sessions.guessed_wrong();
         return refuse(
             StatusCode::FORBIDDEN,
             "That is not the setup code. It is in the bridge's log: journalctl -u proxmox-crt",
         );
     }
+    app.sessions.guessed_right(from.ip());
     if form.password.chars().count() < auth::MIN_PASSWORD {
         return refuse(
             StatusCode::BAD_REQUEST,
@@ -284,9 +296,12 @@ async fn setup(State(app): State<Arc<App>>, headers: HeaderMap, Json(form): Json
     };
 
     let password = form.password;
-    let hash = match tokio::task::spawn_blocking(move || auth::hash_password(&password)).await {
-        Ok(Ok(hash)) => hash,
-        _ => return refuse(StatusCode::INTERNAL_SERVER_ERROR, "Could not hash the password."),
+    let hash = {
+        let _turn = app.hashing.acquire().await;
+        match tokio::task::spawn_blocking(move || auth::hash_password(&password)).await {
+            Ok(Ok(hash)) => hash,
+            _ => return refuse(StatusCode::INTERNAL_SERVER_ERROR, "Could not hash the password."),
+        }
     };
     let saved = {
         let mut config = app.config.write().unwrap();
@@ -325,24 +340,33 @@ struct Login {
     password: String,
 }
 
-async fn login(State(app): State<Arc<App>>, headers: HeaderMap, Json(form): Json<Login>) -> Response {
+async fn login(
+    State(app): State<Arc<App>>,
+    ConnectInfo(from): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(form): Json<Login>,
+) -> Response {
     if !same_origin(&headers) {
         return refuse(StatusCode::FORBIDDEN, "That request came from another site.");
     }
     let Some(hash) = app.config.read().unwrap().password_hash.clone() else {
         return refuse(StatusCode::CONFLICT, "This bridge is not set up yet.");
     };
-    if !app.sessions.may_guess() {
+    // The guess is counted before it is checked, and uncounted if right.
+    if !app.sessions.may_guess(from.ip()) {
         return refuse(StatusCode::TOO_MANY_REQUESTS, "Too many wrong tries. Wait a minute.");
     }
     let password = form.password;
-    let right = tokio::task::spawn_blocking(move || auth::verify_password(&password, &hash))
-        .await
-        .unwrap_or(false);
+    let right = {
+        let _turn = app.hashing.acquire().await;
+        tokio::task::spawn_blocking(move || auth::verify_password(&password, &hash))
+            .await
+            .unwrap_or(false)
+    };
     if !right {
-        app.sessions.guessed_wrong();
         return refuse(StatusCode::FORBIDDEN, "Wrong password.");
     }
+    app.sessions.guessed_right(from.ip());
     let token = app.sessions.open();
     (
         StatusCode::OK,
@@ -431,6 +455,16 @@ async fn find_guest(app: &App, client: &pve::Client, vmid: u64) -> Option<pve::G
     found
 }
 
+/// After Proxmox refused something for `guest`: reads the cluster again
+/// and, if the guest has moved to another node or its number now belongs
+/// to the other kind of guest, says where it is, so it can be tried there.
+async fn moved(app: &App, client: &pve::Client, guest: &pve::Guest) -> Option<pve::Guest> {
+    let reading = client.read().await.ok()?;
+    let found = reading.guests.iter().find(|g| g.vmid == guest.vmid).cloned();
+    *app.guests.write().unwrap() = reading.guests;
+    found.filter(|now| now != guest)
+}
+
 #[derive(Deserialize)]
 struct Power {
     action: String,
@@ -452,7 +486,13 @@ async fn power(State(app): State<Arc<App>>, headers: HeaderMap, UrlPath(vmid): U
     let Some(guest) = find_guest(&app, &client, vmid).await else {
         return refuse(StatusCode::NOT_FOUND, format!("There is no guest {vmid}."));
     };
-    if let Err(e) = client.power(&guest, &form.action).await {
+    let mut switched = client.power(&guest, &form.action).await;
+    if switched.is_err()
+        && let Some(guest) = moved(&app, &client, &guest).await
+    {
+        switched = client.power(&guest, &form.action).await;
+    }
+    if let Err(e) = switched {
         return refuse(StatusCode::BAD_GATEWAY, e.0);
     }
     app.wake.notify_one();
@@ -494,7 +534,13 @@ async fn run_console(mut socket: WebSocket, app: Arc<App>, vmid: u64, cols: u16,
     let Some(guest) = find_guest(&app, &client, vmid).await else {
         return tell(&mut socket, json!({ "error": format!("There is no guest {vmid}.") })).await;
     };
-    let opened = match client.console(&guest).await {
+    let mut opened = client.console(&guest).await;
+    if opened.is_err()
+        && let Some(guest) = moved(&app, &client, &guest).await
+    {
+        opened = client.console(&guest).await;
+    }
+    let opened = match opened {
         Ok(opened) => opened,
         Err(e) => return tell(&mut socket, json!({ "error": e.0 })).await,
     };

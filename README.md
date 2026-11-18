@@ -28,7 +28,7 @@ terminal is a real terminal on whichever guest is selected. What works:
   the console and the guest's figures (gauges, network rates, uptime, CPU
   history).
 - A computer room under the wall, right across it: cabinets of
-  blinking lamps and tape drives. Each of the first few follows one node, and
+  blinking lamps and tape drives, with tape running from reel to reel. Each of the first few follows one node, and
   blinks and winds as busily as that node is working.
 - Racks beside the wall and in the corners, as a firing room has them, each
   with a clock (GMT, local, or time since the page opened), boards of status
@@ -41,7 +41,11 @@ terminal is a real terminal on whichever guest is selected. What works:
   turning the view.
 - The terminal's keyboard on the desk, whose keys go down as you type; a
   lava lamp; and what a shift leaves lying about: a logbook and pen, a mug,
-  a headset and a desk lamp.
+  a headset and a desk lamp, which is terminal's own. Each lamp has a switch
+  in its cord on the desk: click the switch, or the lamp, to turn it on or
+  off. The lava lamp's light goes out at once, but its wax goes by its
+  heat: it sinks and settles over a couple of minutes, and takes a minute to
+  get going again.
 - A strip of small node monitors between the terminal and its keyboard, one
   per node (up to four), with each node's CPU, memory and guest count. They
   come into view when you look down at the desk; nothing selects them.
@@ -62,26 +66,30 @@ terminal is a real terminal on whichever guest is selected. What works:
   the switch will do. Then click the switch (or press numpad Enter) to start
   a stopped guest or shut down a running one; numpad `/` cuts a running
   guest's power instead. Clicking the cover again, or numpad `*`, shuts it
-  with nothing done, and so does leaving it for six seconds or selecting
-  another monitor.
-- Zoom: the mouse wheel over the wall closes in on the monitors under the
-  pointer, three steps, and backs off again; picking a monitor goes back to
-  the seat.
+  with nothing done, and so does leaving it for six seconds, selecting
+  another monitor or typing a monitor number: Enter after a digit selects,
+  and never switches.
+- Zoom: the mouse wheel closes in on whatever is under the pointer and backs
+  off again, anywhere but over the desk terminal's screen and the dial. It
+  stays closed in while monitors are picked.
 - Lock: the LOCK ON TARGET button on the desk, Scroll Lock, numpad `/` or a
-  click on the terminal's case brings the
-  view in close to the terminal's screen and holds it still; the same again
-  lets go.
+  click on the terminal's case brings the view in close to the terminal's
+  screen and holds it still; the same again lets go, and so does a right
+  click.
 - Switching: type a monitor number on the numpad (two digits select at once,
   one digit after a pause or Enter), `+` and `-` for next and previous, or
   click a wall monitor. The numpad always belongs to the switcher; every
   other key goes to the guest while its console is on the desk. With no
   console there, the arrow keys move around the wall.
-- Looking around: the view is yours to move and stays where you leave it.
-  Drag on anything that is not a control (or drag with the right button
-  anywhere) to turn the head; a finger does the same on a touch screen.
-  Double-click on nothing in particular to go back to the seat's view. With
-  no console on the desk, Page Down turns to the keyboard and Page Up or
-  Home back to the seat.
+- Looking around: the view follows the pointer. It turns toward wherever in
+  the window the pointer is, a little near the middle and more toward the
+  edges, so the wall, the desk and the side walls are all within reach with
+  nothing held down. It stops where the room's furnishing ends, and turns
+  further the more it is closed in. A right click holds the view where it is, and another
+  lets it follow again. Double-click on nothing in particular to go back to
+  the seat's view with nothing closed in on. On a touch screen a finger
+  drags the view and a tap picks. With no console on the desk, Page Down
+  holds the view on the keyboard and Page Up or Home lets it go.
 
 Still to come, in order: the modelled and baked office, power control and
 settings, a Debian LXC installer, then VNC screens for VMs without a serial
@@ -132,7 +140,9 @@ fingerprint = "AA:BB:..."         # leave out for a publicly signed certificate
 ```
 
 The bridge serves plain http. To reach it from outside your own network, put
-it behind a reverse proxy that adds TLS.
+it behind a reverse proxy that adds TLS. Wrong passwords are limited to
+five a minute for each address, and behind a proxy every visitor comes from
+the proxy's own, so they share that limit.
 
 ## Running it
 
@@ -182,6 +192,8 @@ Query parameters:
 | `client/gl/panels.js` | The racks beside the wall: clocks, status lamps, meters, scopes. |
 | `client/gl/lavalamp.js` | The lava lamp. |
 | `client/gl/props.js` | The logbook, mug, headset and desk lamp. |
+| `client/gl/lamp-model.js` | The desk lamp's shape, taken from terminal's scene by `tools/extract-lamp.mjs`. |
+| `client/gl/cordswitch.js` | The rocker switch in a lamp's cord. |
 | `client/gl/boards.js` | The big boards beyond the monitors and the signs along the top. |
 | `client/gl/power.js` | What a tube does when it is switched on and off. |
 | `client/gl/textgrid.js` | A grid of characters and the video signal made from it. |
