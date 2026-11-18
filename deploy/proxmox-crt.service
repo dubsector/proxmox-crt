@@ -1,0 +1,39 @@
+[Unit]
+Description=proxmox-crt, a CRT wall for Proxmox VE
+Documentation=https://github.com/dubsector/proxmox-crt
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=proxmox-crt
+Group=proxmox-crt
+ExecStart=/opt/proxmox-crt/proxmox-crt --config /etc/proxmox-crt/config.toml --client /opt/proxmox-crt/client
+Restart=on-failure
+RestartSec=5
+
+# The settings file holds the API token: keep new files private.
+UMask=0077
+
+# The bridge only writes its settings file.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/proxmox-crt
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
