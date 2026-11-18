@@ -4,6 +4,7 @@
 // few stay attached, so going back to a guest finds its screen as it was.
 import { Terminal } from "@xterm/xterm";
 import { BOLD, DIM, INVERSE, UNDERLINE } from "./gl/textgrid.js";
+import { lightness, paletteColor, shade } from "./mono.js";
 
 var NO_SERIAL = /serial interface/i;
 
@@ -251,14 +252,19 @@ export function createConsoles(options) {
         // The second half of a wide character.
         if (cell.getWidth() === 0) continue;
         var idx = row * grid.cols + col;
-        var attr = 0;
-        // A monochrome tube has no colours. A coloured background becomes
-        // a lit one, or a program's bars and selections would vanish; the
-        // grey that programs use for faint text becomes dim.
-        if (cell.isBold()) attr |= BOLD;
-        else if (cell.isDim() || (cell.isFgPalette() && cell.getFgColor() === 8)) attr |= DIM;
-        if (cell.isInverse() || !(cell.isBgDefault() || (cell.isBgPalette() && cell.getBgColor() === 0))) attr |= INVERSE;
+        // A monochrome tube has no colours, so each becomes a shade: see
+        // mono.js. The grey that programs use for faint text becomes dim.
+        var fore = cell.isFgDefault() ? 0.8 : lightness(cell.isFgRGB() ? cell.getFgColor() : paletteColor(cell.getFgColor()));
+        var back = cell.isBgDefault() || (cell.isBgPalette() && cell.getBgColor() === 0) ? 0 : lightness(cell.isBgRGB() ? cell.getBgColor() : paletteColor(cell.getBgColor()));
+        if (cell.isInverse()) {
+          var swap = fore;
+          fore = back || 0.8;
+          back = swap;
+        }
+        var look = shade(fore, back, cell.isBold(), cell.isDim() || (cell.isFgPalette() && cell.getFgColor() === 8));
+        var attr = look.attr;
         if (cell.isUnderline()) attr |= UNDERLINE;
+        grid.backs[idx] = look.back;
         grid.chars[idx] = cell.isInvisible() ? " " : cell.getChars() || " ";
         grid.attrs[idx] = attr;
       }
