@@ -1,4 +1,4 @@
-use proxmox_crt::{App, Options, auth, serve};
+use proxmox_crt::{App, Options, auth, enable_password_login, reset_second_factor, serve};
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -14,6 +14,16 @@ Usage: proxmox-crt [options]
                     (default 0.0.0.0:8086)
   --hash-password   read a password from standard input and print the hash
                     to put in the settings file as password_hash
+  --reset-second-factor
+                    remove the authenticator app, its recovery codes and
+                    the passkeys from the settings file, for when they
+                    are lost; the password alone logs in from then on,
+                    and restarting the bridge closes the open sessions
+  --enable-password-login
+                    let the password log in again where the settings file
+                    leaves that to single sign-on alone (password_login =
+                    false), for when the provider no longer lets you
+                    through; then restart the bridge
   --version
   --help
 ";
@@ -22,6 +32,8 @@ fn main() -> ExitCode {
     let mut config = PathBuf::from("/etc/proxmox-crt/config.toml");
     let mut client = PathBuf::from("/opt/proxmox-crt/client");
     let mut listen = None;
+    let mut reset = false;
+    let mut password_back = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = |name: &str| {
@@ -56,6 +68,8 @@ fn main() -> ExitCode {
                     }
                 };
             }
+            "--reset-second-factor" => reset = true,
+            "--enable-password-login" => password_back = true,
             "--version" => {
                 println!("proxmox-crt {}", env!("CARGO_PKG_VERSION"));
                 return ExitCode::SUCCESS;
@@ -69,6 +83,43 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         }
+    }
+
+    if reset {
+        return match reset_second_factor(&config) {
+            Ok(true) => {
+                println!("Removed the second factors from {}.", config.display());
+                println!("The password alone logs in from now on.");
+                println!("Restart the bridge to close the sessions that are open: systemctl restart proxmox-crt");
+                ExitCode::SUCCESS
+            }
+            Ok(false) => {
+                println!("There is no second factor in {}.", config.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("could not reset {}: {e}", config.display());
+                ExitCode::FAILURE
+            }
+        };
+    }
+
+    if password_back {
+        return match enable_password_login(&config) {
+            Ok(true) => {
+                println!("Turned logging in by password back on in {}.", config.display());
+                println!("Restart the bridge to have it take the password: systemctl restart proxmox-crt");
+                ExitCode::SUCCESS
+            }
+            Ok(false) => {
+                println!("Logging in by password is not turned off in {}.", config.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("could not change {}: {e}", config.display());
+                ExitCode::FAILURE
+            }
+        };
     }
 
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {

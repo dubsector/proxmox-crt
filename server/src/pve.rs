@@ -123,7 +123,7 @@ fn tls_pinned(pin: Arc<Pin>) -> ClientConfig {
         .with_no_client_auth()
 }
 
-fn tls_public() -> ClientConfig {
+pub(crate) fn tls_public() -> ClientConfig {
     let mut roots = RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     ClientConfig::builder_with_provider(provider())
