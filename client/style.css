@@ -92,11 +92,12 @@ body {
   pointer-events: none;
 }
 
-/* The setup and login cards. */
-#gate {
+/* The setup and login cards, and the sign-in settings. They lie over
+   everything that can be pressed, the touch keypad included. */
+.gate {
   position: fixed;
   inset: 0;
-  z-index: 2;
+  z-index: 10;
   display: grid;
   place-items: center;
   padding: 16px;
@@ -104,6 +105,11 @@ body {
   background: #050806;
   font: 14px/1.5 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   color: #6dff8d;
+}
+
+/* The settings come up over the wall, which stays in sight behind them. */
+#settings {
+  background: rgba(5, 8, 6, 0.86);
 }
 
 .gate-card {
@@ -179,6 +185,60 @@ body {
   cursor: pointer;
 }
 
+/* The lesser buttons of a card: things to do other than its main one. */
+.gate-card button.gate-quiet {
+  margin-bottom: 10px;
+  color: #6dff8d;
+  background: transparent;
+  border: 1px solid rgba(109, 255, 141, 0.45);
+}
+
+/* One under the main button keeps its distance from it. */
+.gate-card button[type="submit"] + button.gate-quiet {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+.gate-card button.gate-quiet:hover {
+  background: rgba(109, 255, 141, 0.1);
+}
+
+.gate-card button.gate-link {
+  display: block;
+  width: auto;
+  margin: 12px auto 0;
+  padding: 2px 4px;
+  letter-spacing: 0;
+  text-transform: none;
+  text-decoration: underline;
+  color: #8fcf9d;
+  background: transparent;
+}
+
+/* The way in through a single sign-on provider: a link, in the look of
+   the lesser buttons. */
+.gate-card a.gate-way {
+  display: block;
+  margin-top: 10px;
+  padding: 9px 10px;
+  text-align: center;
+  text-decoration: none;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #6dff8d;
+  border: 1px solid rgba(109, 255, 141, 0.45);
+  border-radius: 2px;
+}
+
+.gate-card a.gate-way:hover {
+  background: rgba(109, 255, 141, 0.1);
+}
+
+.gate-card a.gate-way:focus-visible {
+  outline: 2px solid #6dff8d;
+  outline-offset: 2px;
+}
+
 .gate-card button:disabled {
   opacity: 0.5;
   cursor: wait;
@@ -209,9 +269,53 @@ body {
   font-size: 13px;
 }
 
+.gate-card .gate-codes {
+  text-align: center;
+  line-height: 1.8;
+  letter-spacing: 0.08em;
+}
+
+/* Dark on white, with room around it, so a phone's camera reads it. */
+.gate-qr {
+  display: block;
+  width: min(100%, 220px);
+  margin: 0 auto 12px;
+  border-radius: 2px;
+}
+
 .gate-error {
   min-height: 1.5em;
   color: #ffb000 !important;
+}
+
+/* The way in to the sign-in settings: there for whoever looks for it, and
+   out of the picture otherwise. It sits over the readout, clear of the
+   desk's controls and of the touch keypad on the other side. */
+#security {
+  position: fixed;
+  z-index: 1;
+  left: 16px;
+  bottom: 52px;
+  padding: 4px 8px;
+  font: 12px/1.2 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+  color: #9fb0a4;
+  background: rgba(8, 10, 9, 0.82);
+  border: 1px solid rgba(159, 176, 164, 0.3);
+  border-radius: 3px;
+  opacity: 0.3;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+#security:hover,
+#security:focus-visible {
+  opacity: 1;
+}
+
+#security:focus-visible {
+  outline: 2px solid #9fb0a4;
+  outline-offset: 2px;
 }
 
 /* Touch screens: a keypad to switch with, since they have no numpad, and

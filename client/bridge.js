@@ -1,7 +1,9 @@
 // The real cluster, by way of the bridge that serves this page. It hands
 // out the same snapshots the demo does (see demo.js), and guests' terminals.
 //
-// The bridge speaks JSON over /api: state, setup, login, logout; and two
+// The bridge speaks JSON over /api: state, setup, login (and login/totp
+// where a second step is asked for), logout, second-factor; a link to
+// follow for single sign-on (/api/oidc/start); and two
 // websockets: /api/feed (a reading of the cluster each time one is taken)
 // and /api/console/<vmid> (binary: what is typed and printed; text: notes).
 
@@ -12,8 +14,10 @@ function wsUrl(path) {
 }
 
 // Asks whether a bridge is serving this page. Resolves to its state ({
-// configured, authed, version }), or null where there is none: a static
-// copy of the page, which then shows the demo cluster.
+// configured, authed, version, password_login, oidc: { label } or null,
+// https_only: whether its cookies travel over https alone }),
+// or null where there is none: a static copy of the page, which then shows
+// the demo cluster.
 export function findBridge() {
   return fetch("api/state", { cache: "no-store", credentials: "same-origin" })
     .then(function (response) {
@@ -28,15 +32,16 @@ export function findBridge() {
     });
 }
 
-// POSTs JSON to the bridge. Resolves to { ok, status, body }, where a
-// failure's body has an `error` to show.
-export function ask(path, body) {
-  return fetch("api/" + path, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body || {}),
-  })
+// Sends JSON to the bridge: a POST unless `method` says otherwise.
+// Resolves to { ok, status, body }, where a failure's body has an `error`
+// to show.
+export function ask(path, body, method) {
+  var request = { method: method || "POST", credentials: "same-origin", cache: "no-store" };
+  if (request.method !== "GET") {
+    request.headers = { "Content-Type": "application/json" };
+    request.body = JSON.stringify(body || {});
+  }
+  return fetch("api/" + path, request)
     .then(function (response) {
       return response
         .json()
@@ -53,7 +58,8 @@ export function ask(path, body) {
 }
 
 // options: { onLink(text or ""): the feed's trouble, or its end,
-//            onLocked(): the session ran out and the page has to log in }
+//            onLocked(state): the session ran out and the page has to log
+//            in; `state` is the bridge's, as findBridge gives it }
 export function createBridgeSource(options) {
   var opts = options || {};
   var listeners = [];
@@ -101,7 +107,7 @@ export function createBridgeSource(options) {
         findBridge().then(function (state) {
           if (state && !state.authed && opts.onLocked) {
             wanted = false;
-            opts.onLocked();
+            opts.onLocked(state);
           }
         });
       }

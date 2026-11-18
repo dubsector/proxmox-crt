@@ -8,7 +8,8 @@ import { wallCard, nodeCard, deskCard, WALL_COLS, WALL_ROWS, DESK_COLS, DESK_ROW
 import { createScene, wallLayout } from "./scene.js";
 import { findBridge, createBridgeSource } from "./bridge.js";
 import { createConsoles } from "./consoles.js";
-import { openGate } from "./gate.js";
+import { openGate, cardOpen } from "./gate.js";
+import { createSecurity } from "./security.js";
 
 var params = new URLSearchParams(location.search);
 var HUD = params.get("hud") === "1" || window.CRT_HUD === true;
@@ -218,7 +219,8 @@ function attach() {
   if (!consoles) return;
   if (guest && guest.status === "running" && deskMode === "console") {
     consoles.open(guest);
-    consoles.focus(guest.vmid);
+    // A card that is up keeps the keyboard until it is done.
+    if (!cardOpen()) consoles.focus(guest.vmid);
   } else {
     consoles.blur();
   }
@@ -467,14 +469,21 @@ function demo() {
 }
 
 function bridge() {
+  // The corner button for the sign-in settings. When its card comes down,
+  // the keyboard goes back to the console.
+  createSecurity({
+    onClose: function () {
+      if (typing()) consoles.focus(current().vmid);
+    },
+  });
   return createBridgeSource({
     onLink: function (text) {
       linkNote.textContent = text ? "NO SIGNAL  " + text : "";
       linkNote.hidden = !text;
     },
     // The session ran out: ask for the password again and carry on.
-    onLocked: function () {
-      openGate({ configured: true, authed: false }).then(function () {
+    onLocked: function (state) {
+      openGate(state).then(function () {
         source.start();
       });
     },
@@ -495,12 +504,12 @@ if (params.get("demo") === "1" || window.CRT_DEMO === true) {
 }
 
 // A click on the scene takes the keyboard from the hidden terminal; give
-// it back.
+// it back, unless a card is up, which keeps it.
 window.addEventListener("pointerup", function () {
-  if (typing()) consoles.focus(current().vmid);
+  if (typing() && !cardOpen()) consoles.focus(current().vmid);
 });
 window.addEventListener("focus", function () {
-  if (typing()) consoles.focus(current().vmid);
+  if (typing() && !cardOpen()) consoles.focus(current().vmid);
 });
 
 // A key of the switcher, from the keyboard or from a click on the desk's
@@ -569,6 +578,8 @@ function buildPad() {
     button.textContent = key[0];
     if (key[2]) button.className = key[2];
     button.addEventListener("click", function () {
+      // While a card is up the switcher is out of reach, as the keyboard is.
+      if (cardOpen()) return;
       if (key[1] === "Keyboard") {
         // The device's keyboard comes up for whatever has the focus.
         if (typing()) consoles.focus(current().vmid);
@@ -589,6 +600,8 @@ function buildPad() {
 buildPad();
 
 window.addEventListener("keydown", function (ev) {
+  // What is typed into a card (the password, a code) is for the card alone.
+  if (cardOpen()) return;
   if (scene) scene.typeKey(ev.code);
   if (!keypad) return;
   var numpad = /^Numpad/.test(ev.code) || ev.code === "ScrollLock";
