@@ -105,8 +105,10 @@ export function createCordSwitch(options) {
   var edge = wallRun[wallRun.length - 1];
   wallRun.push(at(edge.x, edge.z - 0.12, -0.1), at(edge.x, edge.z - 0.16, -1.2), at(edge.x, edge.z - 0.16, -6));
   var cordGeos = [cordGeometry(lampRun), cordGeometry(wallRun)];
-  cordGeos.forEach(function (geometry) {
-    group.add(new Mesh(geometry, seamMat));
+  var cords = cordGeos.map(function (geometry) {
+    var m = new Mesh(geometry, seamMat);
+    group.add(m);
+    return m;
   });
 
   var on = true;
@@ -115,6 +117,8 @@ export function createCordSwitch(options) {
 
   return {
     group: group,
+    // The cords, which a baked room draws for itself.
+    shell: cords,
     // What takes the click.
     pickables: [body, wheel],
     set: function (to) {

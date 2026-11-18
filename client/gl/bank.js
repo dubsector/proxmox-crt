@@ -20,6 +20,7 @@ import {
   LinearFilter,
   LinearMipmapLinearFilter,
   ClampToEdgeWrapping,
+  Matrix4,
 } from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { createFaceMaterial, createFaceGeometry, FACE_HALF_W, FACE_HALF_H } from "./face.js";
@@ -158,6 +159,13 @@ export function createBank(options) {
     setLed: function (i, state) {
       leds.setColorAt(i, LED_COLORS[state] || LED_COLORS.off);
       leds.instanceColor.needsUpdate = true;
+    },
+    // Takes set i's cabinet away, where a baked room has its own. Its face
+    // and lamp stay.
+    hideCabinet: function (i) {
+      var m = new Matrix4().makeScale(0, 0, 0);
+      cabinets.setMatrixAt(i, m);
+      cabinets.instanceMatrix.needsUpdate = true;
     },
     setCabinetColor: function (i, color) {
       cabinets.setColorAt(i, color);

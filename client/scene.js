@@ -1,7 +1,11 @@
-// The room, in grey-box form: a rack wall of small monitors, a desk with the
-// terminal on it and a strip of node monitors above its keyboard, a computer room of lamps and
-// tape drives under the wall, and a seat to look at them from. Plain boxes under plain lights for now; the modelled, baked office replaces the
-// geometry here and nothing else.
+// The room: a rack wall of small monitors, a desk with the terminal on it
+// and a strip of node monitors above its keyboard, a computer room of lamps
+// and tape drives under the wall, and a seat to look at them from.
+//
+// It is drawn at once in grey-box form, plain boxes under plain lights.
+// When the build has the modelled, baked office (gl/office.js, made by
+// tools/blender/build_office.py), that is loaded behind it and takes over
+// everything that neither moves nor lights up; the live parts stay.
 //
 // This file owns what is drawn and where. It knows nothing about Proxmox:
 // it is handed text grids to put on screens and reports which monitor was
@@ -30,7 +34,7 @@ import { paintGrid } from "./gl/textgrid.js";
 import { createTube, DECAY_SLOW_S } from "./gl/tube.js";
 import { createBank, createCabinetGeometry, CABINET } from "./gl/bank.js";
 import { PHOSPHORS, GLASS_T, EMISSION_GAIN, faceHit } from "./gl/face.js";
-import { createMachines, MACHINE } from "./gl/machines.js";
+import { createMachines } from "./gl/machines.js";
 import { createControls } from "./gl/controls.js";
 import { createKeyboard } from "./gl/keyboard.js";
 import { createPanels, PANEL } from "./gl/panels.js";
@@ -38,36 +42,13 @@ import { createLavaLamp } from "./gl/lavalamp.js";
 import { createBoards } from "./gl/boards.js";
 import { createProps } from "./gl/props.js";
 import { createCordSwitch } from "./gl/cordswitch.js";
+import { officeAvailable, pickMapSize, loadOffice, buildOffice, wallCellAt } from "./gl/office.js";
+import { drawLegends } from "./gl/legends.js";
+import { officeLayout, WALL, WALL_SCALE, PITCH_X, PITCH_Y, WALL_Z, WALL_BOTTOM_Y, DESK_Y, DESK, FLOOR_Y, SIDE_GAP, SIDE_Z, SIDE_LEAN, SIDE_RACKS, nodeSetScale } from "./layout.js";
 
 // Everything is in tube units (about 61 mm): the desk terminal's tube face
-// is 4 x 3 of them and sits at the origin, facing +Z.
-//
-// Wall monitors are 9-inch sets, three quarters the size of the terminal's
-// 12-inch tube, in a rack with a little steel showing between them.
-var WALL_SCALE = 0.75;
-var PITCH_X = 3.9;
-var PITCH_Y = 3.3;
-var WALL_Z = -36;
-// Centre of the bottom row: as low as it can be with the whole row still
-// showing over the top of the terminal from the seat.
-var WALL_BOTTOM_Y = 2.4;
-var DESK_Y = CABINET.bottom - 0.05;
-// The node monitors' strip above the keyboard: how big its sets are, how
-// far in front of the terminal they sit, and how far they lie back.
-var SIDE_SCALE = 0.34;
-var SIDE_GAP = 0.14;
-var SIDE_Z = 2.9;
-var SIDE_LEAN = 1.0;
-// The cabinets under the wall: how many stand either side of the middle,
-// and how far from it the first begins. They run right across, behind the
-// terminal too, so the wall is not bare wherever the terminal is seen from.
-var MACHINES_A_SIDE = 4;
-var MACHINES_FROM = 0;
-// Beyond the monitors and the rack beside them, each way: a big board with
-// this many more cabinets under it, a last rack in the corner, and then the
-// side wall, with this many racks along it.
-var BOARD_MACHINES = 4;
-var SIDE_RACKS = 2;
+// is 4 x 3 of them and sits at the origin, facing +Z. Where everything
+// stands is in layout.js, which the Blender scripts read too.
 // Each wall picture is half the desk terminal's raster each way, and holds
 // 13 x 4 characters of the 9 x 14 ROM at three times its size: big enough
 // to read from the seat.
@@ -109,22 +90,16 @@ var LOOK_PITCH_MAX = 35;
 var SWAP_AFTER_S = 0.9;
 var STAGGER_S = 1.4;
 
-// The wall's shape for a number of guests: the smallest of these that
-// holds them all. Wide and low, so the wall and the terminal under it fit a
-// landscape window together.
-var LAYOUTS = [
-  [4, 3],
-  [8, 3],
-  [13, 4],
-];
-
-export function wallLayout(guests) {
-  for (var i = 0; i < LAYOUTS.length; i++) {
-    if (LAYOUTS[i][0] * LAYOUTS[i][1] >= guests) return { columns: LAYOUTS[i][0], rows: LAYOUTS[i][1] };
-  }
-  var last = LAYOUTS[LAYOUTS.length - 1];
-  return { columns: last[0], rows: last[1] };
+// The wall's shape: always the full rack (layout.js), whatever the number of
+// guests; the sets nobody needs stay switched off.
+export function wallLayout() {
+  return { columns: WALL.columns, rows: WALL.rows };
 }
+
+// Where the baked office is served from, and how bright the desk terminal's
+// picture is taken to be when it lights the room (as terminal's scene.js).
+var ASSET_BASE = "assets/";
+var SCREEN_GLOW_GAIN = 3.0;
 
 function slab(w, h, d, x, y, z, material) {
   var m = new Mesh(new BoxGeometry(w, h, d), material);
@@ -141,6 +116,7 @@ function slab(w, h, d, x, y, z, material) {
 // is the keypad's + or -) }
 export function createScene(options) {
   var layout = wallLayout(options.guests);
+  var L = officeLayout();
   var wallCount = layout.columns * layout.rows;
   // A cabinet for each node, as far as there are cabinets.
   var nodeCount = Math.min(options.nodes || 0, 4);
@@ -169,33 +145,31 @@ export function createScene(options) {
   var cream = new MeshStandardMaterial({ color: 0xd9d3bd, roughness: 0.6 });
   var floorMat = new MeshStandardMaterial({ color: 0x1c1d1f, roughness: 0.9 });
 
-  var wallW = layout.columns * PITCH_X;
-  var wallH = layout.rows * PITCH_Y;
-  var wallMidY = WALL_BOTTOM_Y + ((layout.rows - 1) * PITCH_Y) / 2;
-  // Where the gear beyond the monitors starts and ends, out from the middle.
-  var rackX = wallW / 2 + 0.8 + 0.3 + PANEL.width / 2;
-  var rackTop = wallMidY + wallH / 2 + 0.75;
-  var boardFrom = rackX + PANEL.width / 2 + 0.3;
-  var boardW = BOARD_MACHINES * MACHINE.width;
-  var cornerX = boardFrom + boardW + 0.3 + PANEL.width / 2;
-  var sideWallX = cornerX + PANEL.width / 2 + 0.3;
+  var wallW = L.wallW;
+  var wallMidY = L.wallMidY;
+  var rackTop = L.rackTop;
+  var sideWallX = L.sideWallX;
+  var floorMid = (L.backWallZ + 30) / 2;
   var room = [
     // Back wall and floor.
-    slab(260, 120, 1, 0, 30, WALL_Z - 6, plaster),
-    slab(260, 1, 160, 0, -16, -20, floorMat),
+    slab(260, 120, 1, 0, 30, L.backWallZ, plaster),
+    slab(260, 1, 160, 0, FLOOR_Y, -20, floorMat),
     slab(1, 120, 160, -(sideWallX + PANEL.depth + 0.3), 30, -20, plaster),
     slab(1, 120, 160, sideWallX + PANEL.depth + 0.3, 30, -20, plaster),
     // The rack the monitors sit in, and the plinth under it.
-    slab(wallW + 1.6, wallH + 1.6, 3.6, 0, wallMidY - 0.05, WALL_Z - 2.4, steel),
-    slab(wallW + 1.6, WALL_BOTTOM_Y + 16 - PITCH_Y / 2 - 0.8, 3.0, 0, (WALL_BOTTOM_Y - PITCH_Y / 2 - 0.8 - 16) / 2, WALL_Z - 2.7, steel),
-    // The desk.
-    slab(34, 0.7, 13, 0, DESK_Y - 0.35, 0.5, wood),
+    slab(L.monitorRack.w, L.monitorRack.h, L.monitorRack.d, 0, L.monitorRack.y, L.monitorRack.z, steel),
+    slab(L.plinth.w, L.plinth.top - FLOOR_Y, L.plinth.d, 0, (L.plinth.top + FLOOR_Y) / 2, L.plinth.z, steel),
+    // The desk, and a block under the plain terminal to stand it on.
+    slab(DESK.halfW * 2, 0.7, DESK.front - DESK.back, 0, DESK_Y - 0.35, (DESK.front + DESK.back) / 2, wood),
+    slab(CABINET.halfW * 2, CABINET.bottom - DESK_Y, -CABINET.back, 0, (CABINET.bottom + DESK_Y) / 2, CABINET.back / 2, cream),
   ];
+  void floorMid;
   room.forEach(function (m) {
     scene.add(m);
   });
 
-  scene.add(new AmbientLight(0xbfd0ff, 0.5));
+  var ambient = new AmbientLight(0xbfd0ff, 0.5);
+  scene.add(ambient);
   var ceiling = new DirectionalLight(0xfff1dc, 0.9);
   ceiling.position.set(4, 30, 20);
   scene.add(ceiling);
@@ -226,28 +200,13 @@ export function createScene(options) {
   var upright = new Quaternion();
   // Monitor 1 is top left; numbers run along each row, as they are read.
   for (var i = 0; i < wallCount; i++) {
-    var col = i % layout.columns;
-    var row = Math.floor(i / layout.columns);
-    var x = (col - (layout.columns - 1) / 2) * PITCH_X;
-    var y = WALL_BOTTOM_Y + (layout.rows - 1 - row) * PITCH_Y;
-    bank.place(i, matrix.compose(new Vector3(x, y, WALL_Z), upright, scale));
+    var mon = L.monitors[i];
+    bank.place(i, matrix.compose(new Vector3(mon.x, mon.y, mon.z), upright, scale));
   }
   // Under the wall, either side of the terminal, stands the computer room:
   // cabinets of lamps and tape drives. The first of them, left to right,
   // each move as one node works; the rest idle.
-  var slots = [];
-  [-1, 1].forEach(function (side) {
-    for (var k = 0; k < MACHINES_A_SIDE; k++) {
-      var out = side < 0 ? MACHINES_A_SIDE - 1 - k : k;
-      slots.push({ x: side * (MACHINES_FROM + MACHINE.width / 2 + out * MACHINE.width), top: WALL_BOTTOM_Y - PITCH_Y / 2 - 1.0, z: WALL_Z + 0.2 });
-    }
-  });
-  // More cabinets under the boards; these have no node and idle.
-  [-1, 1].forEach(function (side) {
-    for (var k = 0; k < BOARD_MACHINES; k++) {
-      slots.push({ x: side * (boardFrom + MACHINE.width / 2 + k * MACHINE.width), top: WALL_BOTTOM_Y - PITCH_Y / 2 - 1.0, z: WALL_Z + 0.2 });
-    }
-  });
+  var slots = L.machines;
   var machines = createMachines({ slots: slots, still: reduced });
   scene.add(machines.group);
 
@@ -255,39 +214,26 @@ export function createScene(options) {
   // board of status lamps, meters and a scope. The left one's meters are
   // the nodes' processors and the right one's their memory. Another stands
   // in each corner.
-  var panels = createPanels({
-    racks: [
-      { x: -rackX, top: rackTop, z: WALL_Z + 0.2, clock: "gmt", label: "GMT" },
-      { x: rackX, top: rackTop, z: WALL_Z + 0.2, clock: "elapsed", label: "ELAPSED" },
-      { x: -cornerX, top: rackTop, z: WALL_Z + 0.2, clock: "local", label: "LOCAL" },
-      { x: cornerX, top: rackTop, z: WALL_Z + 0.2, clock: "gmt", label: "GMT" },
-    ],
-    still: reduced,
-  });
+  var panels = createPanels({ racks: L.racks, still: reduced });
   scene.add(panels.group);
 
   // Between them, over the further cabinets, are the big boards: a
   // tracking chart to the left and the nodes' load to the right. A row of
   // lit signs runs along the top of everything.
-  var boardH = rackTop - (WALL_BOTTOM_Y - PITCH_Y / 2 - 1.0) - 0.3;
   var boards = createBoards({
-    track: { x: -(boardFrom + boardW / 2), y: rackTop - boardH / 2, z: WALL_Z + 0.2, width: boardW - 0.4, height: boardH },
-    trend: { x: boardFrom + boardW / 2, y: rackTop - boardH / 2, z: WALL_Z + 0.2, width: boardW - 0.4, height: boardH },
+    track: L.boards.track,
+    trend: L.boards.trend,
     nodes: nodeCount,
-    signs: { y: rackTop + 1.35, z: WALL_Z + 0.2, width: (sideWallX + PANEL.depth) * 2, height: 2 },
+    signs: L.signs,
     still: reduced,
   });
   scene.add(boards.group);
 
   // The side walls, each with racks along it, facing in.
-  var sideRacks = [-1, 1].map(function (side) {
-    var racks = [];
-    for (var k = 0; k < SIDE_RACKS; k++) {
-      racks.push({ x: side * (WALL_Z + 0.6 + PANEL.width / 2 + k * (PANEL.width + 0.3)), top: rackTop, z: 0, clock: k ? "elapsed" : "gmt", label: k ? "ELAPSED" : "GMT" });
-    }
-    var along = createPanels({ racks: racks, still: reduced });
-    along.group.position.x = side * (sideWallX - 0.2);
-    along.group.rotation.y = (-side * Math.PI) / 2;
+  var sideRacks = L.sideRacks.map(function (side) {
+    var along = createPanels({ racks: side.racks, still: reduced });
+    along.group.position.x = side.x;
+    along.group.rotation.y = side.turn;
     scene.add(along.group);
     return along;
   });
@@ -296,12 +242,13 @@ export function createScene(options) {
   // terminal and its keyboard, lying back to face whoever looks down at
   // the keys: there to be glanced at, and nothing selects them.
   if (nodeCount) {
-    var sideScale = new Vector3(SIDE_SCALE, SIDE_SCALE, SIDE_SCALE);
-    var setW = CABINET.halfW * 2 * SIDE_SCALE;
+    var setScale = nodeSetScale(nodeCount);
+    var sideScale = new Vector3(setScale, setScale, setScale);
+    var setW = CABINET.halfW * 2 * setScale;
     var rowW = nodeCount * (setW + SIDE_GAP) + SIDE_GAP;
     var lean = new Quaternion().setFromEuler(new Euler(-SIDE_LEAN, 0, 0));
     // Each set's face sits on the slope; its cabinet goes down into the panel.
-    var rise = new Vector3(0, -CABINET.bottom * SIDE_SCALE, 0).applyQuaternion(lean);
+    var rise = new Vector3(0, -CABINET.bottom * setScale, 0).applyQuaternion(lean);
     for (var n = 0; n < nodeCount; n++) {
       var where = new Vector3(-rowW / 2 + SIDE_GAP + setW / 2 + n * (setW + SIDE_GAP), DESK_Y + 0.1, SIDE_Z).add(rise);
       bank.place(wallCount + n, matrix.compose(where, lean, sideScale));
@@ -312,66 +259,116 @@ export function createScene(options) {
   // and the keypad and dial on the desk to the right of the node monitors.
   var controls = createControls({
     deskY: DESK_Y,
-    box: { x: 5.2, z: -2.4, turn: -0.3 },
-    keypad: { x: 4.3, z: 1.5 },
-    dial: { x: 7.2, z: 1.5 },
-    lock: { x: -3.6, z: 1.9, turn: 0.12 },
+    box: L.controls.box,
+    keypad: L.controls.keypad,
+    dial: L.controls.dial,
+    lock: L.controls.lock,
   });
   scene.add(controls.group);
 
   // Somebody's lava lamp, on the other side of the terminal from the box.
-  var lavaLamp = createLavaLamp({ x: -5.4, y: DESK_Y, z: -2.2, still: reduced });
+  var lavaLamp = createLavaLamp({ x: L.lavaLamp.x, y: DESK_Y, z: L.lavaLamp.z, still: reduced });
   scene.add(lavaLamp.group);
 
   // What a shift leaves lying about, on the bare ends of the desk.
   var props = createProps({
     deskY: DESK_Y,
-    logbook: { x: -7.2, z: 3.4, turn: 0.22 },
-    mug: { x: -9.6, z: 1.2 },
-    headset: { x: 10.4, z: 3.6, turn: -0.5 },
-    lamp: { x: 14.6, z: -1.6, turn: 3.75 },
+    logbook: L.props.logbook,
+    mug: L.props.mug,
+    headset: L.props.headset,
+    lamp: L.props.lamp,
   });
   scene.add(props.group);
 
   // Each lamp has a switch in its cord, lying on the desk in front of it.
-  var lavaSwitch = createCordSwitch({
-    x: -4.6,
-    y: DESK_Y,
-    z: -0.6,
-    turn: 0.35,
-    fromLamp: [[-5.25, -1.62]],
-    toWall: [
-      [-3.95, 0.25],
-      [-3.35, -0.7],
-      [-3.45, -3.4],
-      [-3.7, -6],
-    ],
-  });
+  var lavaSwitch = createCordSwitch(Object.assign({ y: DESK_Y }, L.cords.lava));
   // The desk lamp's cord leaves its base on the left and goes back to the
   // desk's edge, with the switch part of the way along it, so it takes up
   // little of the desk.
-  var lampSwitch = createCordSwitch({
-    x: 11.45,
-    y: DESK_Y,
-    z: -2.9,
-    turn: -2.61,
-    fromLamp: [
-      [13.25, -1.6],
-      [12.55, -1.75],
-    ],
-    toWall: [
-      [10.85, -4.6],
-      [11.0, -6],
-    ],
-  });
-
-
-
+  var lampSwitch = createCordSwitch(Object.assign({ y: DESK_Y }, L.cords.lamp));
   scene.add(lavaSwitch.group, lampSwitch.group);
 
   // The terminal's keyboard, in front of it.
-  var keyboard = createKeyboard({ x: 0, y: DESK_Y, z: 4.6, width: 7.6, material: cream });
+  var keyboard = createKeyboard({ x: L.keyboard.x, y: DESK_Y, z: L.keyboard.z - 1.69, width: 7.6, material: cream });
   scene.add(keyboard.group);
+
+  // --- the baked office ----------------------------------------------------
+  // Where the eye goes to lock on the terminal: square in front of its
+  // screen, which leans back in the baked office.
+  var deskEye = DESK_EYE.clone();
+  // Loaded behind the grey box when the build has one. Once it is in, the
+  // grey box's plain stand-ins for what it draws are hidden; they stay in
+  // the scene, unseen, to take the clicks they always took.
+  var office = null;
+  var officeLoad = null;
+  var officeError = null;
+  var officeCase = [];
+  var officeLamp = [];
+  // The light the room's pictures throw, as the baked maps want it.
+  var screenTint = new Color();
+  var wallTint = new Color();
+  var phosphor = new Color().fromArray(PHOSPHORS[options.phosphor] || PHOSPHORS.green);
+
+  function useOffice(loaded) {
+    var keyNodes = [];
+    loaded.gltf.scene.traverse(function (o) {
+      if (o.userData && o.userData.code !== undefined) keyNodes.push(o);
+    });
+    var strip = loaded.gltf.scene.getObjectByName("LegendStrip");
+    var legends = drawLegends(keyNodes, strip, renderer.capabilities.getMaxAnisotropy());
+    office = buildOffice(loaded, legends);
+    office.legends = legends;
+    if (Math.abs(office.deskY - DESK_Y) > 0.01) throw new Error("office was baked for a desk at " + office.deskY + ", the page has " + DESK_Y);
+    scene.add(office.root);
+    var hide = [deskCabinet, keyboard.group].concat(room, machines.shell, panels.shell, boards.shell, controls.shell, lavaLamp.shell, props.shell, lavaSwitch.shell, lampSwitch.shell);
+    sideRacks.forEach(function (along) {
+      hide = hide.concat(along.shell);
+    });
+    hide.forEach(function (m) {
+      m.visible = false;
+    });
+    for (var i = 0; i < wallCount; i++) bank.hideCabinet(i);
+    // The terminal leans back, as the real one does.
+    tube.mesh.quaternion.copy(office.tubeQuaternion);
+    tube.mesh.updateMatrixWorld(true);
+    deskEye.copy(DESK_EYE).applyQuaternion(office.tubeQuaternion);
+    // The plain room's own lights now only light the live parts, which sit
+    // in a room that is mostly dark.
+    ambient.intensity = 0.35;
+    ceiling.intensity = 0.55;
+    // What a click can land on: the model's terminal and wall of sets, in
+    // place of the plain cabinet and the wall's cabinets.
+    officeCase = office.terminalCase;
+    officeLamp = office.lampParts;
+    pickable.splice(pickable.indexOf(deskCabinet), 1);
+    pickable.push.apply(pickable, officeCase);
+    if (office.wallSets) pickable.push(office.wallSets);
+    // The model's lamp stops a click as the plain one does; only its cord
+    // switch turns it on or off.
+    pickable.push.apply(pickable, officeLamp);
+    wake(2);
+  }
+
+  if (officeAvailable() && options.office !== false) {
+    officeLoad = loadOffice(options.assetBase || ASSET_BASE, pickMapSize(renderer.capabilities.maxTextureSize));
+    officeLoad.promise
+      .then(function (loaded) {
+        if (dead) return;
+        useOffice(loaded);
+        return officeLoad.better.then(function (maps) {
+          if (dead || !maps) return;
+          var old = loaded.maps;
+          office.setMaps(maps);
+          officeLoad.release(old);
+          wake(0.5);
+        });
+      })
+      .catch(function (err) {
+        // The grey box stays: the room still works without its model.
+        officeError = (err && err.message) || String(err);
+        if (window.console) console.warn("office not loaded: " + officeError);
+      });
+  }
 
   // --- what is on each screen ----------------------------------------------
   // kind: "off" (a spare set), or any name for what it shows. A set that
@@ -521,10 +518,11 @@ export function createScene(options) {
 
   function setGoal() {
     if (deskLock) {
-      var need = Math.max(DESK_HALF.h / DESK_EYE.z, DESK_HALF.w / DESK_EYE.z / camera.aspect);
+      var away = deskEye.length();
+      var need = Math.max(DESK_HALF.h / away, DESK_HALF.w / away / camera.aspect);
       goal.fov = (2 * Math.atan(need) * 180) / Math.PI;
       goal.yaw = 0;
-      goal.pitch = (Math.atan2(-DESK_EYE.y, DESK_EYE.z) * 180) / Math.PI;
+      goal.pitch = (Math.atan2(-deskEye.y, deskEye.z) * 180) / Math.PI;
       return;
     }
     goal.fov = fovFor(VIEW.seat, camera.aspect) * zoom;
@@ -591,7 +589,7 @@ export function createScene(options) {
       camera.updateProjectionMatrix();
     }
     camera.position.copy(EYE);
-    if (deskNear) camera.position.lerp(DESK_EYE, deskNear * deskNear * (3 - 2 * deskNear));
+    if (deskNear) camera.position.lerp(deskEye, deskNear * deskNear * (3 - 2 * deskNear));
     var yaw = (cur.yaw * Math.PI) / 180;
     var r = (cur.pitch * Math.PI) / 180;
     target.set(camera.position.x + Math.sin(yaw) * Math.cos(r) * 10, camera.position.y + Math.sin(r) * 10, camera.position.z - Math.cos(yaw) * Math.cos(r) * 10);
@@ -693,10 +691,15 @@ export function createScene(options) {
     var hits = raycaster.intersectObjects(pickable, false);
     if (!hits.length) return 0;
     var hit = hits[0];
-    if ((hit.object === bank.faces || hit.object === bank.cabinets) && hit.instanceId !== undefined && hit.instanceId < wallCount) {
-      return screens[hit.instanceId].kind === "off" || screens[hit.instanceId].kind === null ? 0 : hit.instanceId + 1;
+    var index = -1;
+    if ((hit.object === bank.faces || hit.object === bank.cabinets) && hit.instanceId !== undefined && hit.instanceId < wallCount) index = hit.instanceId;
+    else if (office && hit.object === office.wallSets) {
+      // The baked sets' cases: which set's, by where on the wall.
+      var cell = wallCellAt(hit.point, L);
+      if (cell) index = cell.row * layout.columns + cell.col;
     }
-    return 0;
+    if (index < 0) return 0;
+    return screens[index].kind === "off" || screens[index].kind === null ? 0 : index + 1;
   }
 
   // Which character cell of the desk terminal is under the pointer, or
@@ -708,8 +711,10 @@ export function createScene(options) {
     raycaster.setFromCamera(ndc, camera);
     var hits = raycaster.intersectObjects(pickable, false);
     if (!hits.length || hits[0].object !== tube.mesh) return null;
-    var dir = raycaster.ray.direction;
-    var face = faceHit(hits[0].point.x, hits[0].point.y, dir.x, dir.y, dir.z);
+    // In the tube's own space, which the baked office turns.
+    var p = tube.mesh.worldToLocal(tubePoint.copy(hits[0].point));
+    var dir = tubeDir.copy(raycaster.ray.direction).applyQuaternion(tubeInverse.copy(tube.mesh.quaternion).invert());
+    var face = faceHit(p.x, p.y, dir.x, dir.y, dir.z);
     if (!face) return null;
     var at = faceToRaster(face.px, face.py);
     return {
@@ -717,6 +722,10 @@ export function createScene(options) {
       row: Math.max(0, Math.min(RASTER.rows - 1, Math.floor(at.v * RASTER.rows))),
     };
   }
+
+  var tubePoint = new Vector3();
+  var tubeDir = new Vector3();
+  var tubeInverse = new Quaternion();
 
   // A press on the desk terminal's screen and the drag that follows it are
   // a selection of its text, which is the page's business.
@@ -833,7 +842,7 @@ export function createScene(options) {
     ndc.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
     raycaster.setFromCamera(ndc, camera);
     var hits = raycaster.intersectObjects(pickable, false);
-    return hits.length > 0 && hits[0].object === deskCabinet;
+    return hits.length > 0 && (hits[0].object === deskCabinet || officeCase.indexOf(hits[0].object) >= 0);
   }
   // A click or a tap: a monitor is picked, a control worked. True if it
   // landed on either.
@@ -981,6 +990,12 @@ export function createScene(options) {
     if (Math.abs(level - screenLevel) < 0.0002) screenLevel = level;
     else moving = true;
     glow.intensity = GLASS_T * EMISSION_GAIN * screenLevel * 70;
+    if (office) {
+      if (office.update(dt)) moving = true;
+      office.setScreenLight(screenTint.copy(phosphor).multiplyScalar(GLASS_T * EMISSION_GAIN * screenLevel * SCREEN_GLOW_GAIN));
+      office.setWallLight(wallTint.copy(phosphor).multiplyScalar(GLASS_T * EMISSION_GAIN * bank.light()));
+      office.setLamp(props.lampLevel());
+    }
 
     if (moving) wake(0.1);
     renderer.render(scene, camera);
@@ -1048,7 +1063,7 @@ export function createScene(options) {
     },
     // A key of the terminal's keyboard going down.
     typeKey: function (code) {
-      if (keyboard.press(code)) wake(0.6);
+      if (office ? office.pressKey(code) : keyboard.press(code)) wake(0.6);
     },
     setSelected: setSelected,
     // "seat" gives the view back to the pointer, with nothing closed in on;
@@ -1074,6 +1089,7 @@ export function createScene(options) {
         calls: info.render.calls,
         triangles: info.render.triangles,
         shaderError: shaderFailed,
+        office: office ? "loaded" : officeError ? "failed: " + officeError : officeLoad ? "loading" : "none",
         monitors: bank.count,
       };
     },
@@ -1118,6 +1134,12 @@ export function createScene(options) {
         m.dispose();
       });
       deskCabinet.geometry.dispose();
+      if (officeLoad) officeLoad.dispose();
+      if (office) {
+        office.dispose();
+        office.legends.keys.dispose();
+        office.legends.strip.dispose();
+      }
       renderer.dispose();
     },
   };
