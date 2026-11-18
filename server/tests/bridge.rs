@@ -535,14 +535,14 @@ async fn wrong_codes_run_out_as_wrong_passwords_do() {
     assert_eq!(before.recovery.len(), 10);
 }
 
-/// Tries `password` as a visitor would whose request a proxy passed on with
+/// Tries `typed` as the password, as a visitor would whose request a proxy passed on with
 /// `forwarded` as its `X-Forwarded-For` header, and answers the status.
-async fn log_in_through_a_proxy(bridge: &Bridge, forwarded: &str, password: &str) -> u16 {
+async fn log_in_through_a_proxy(bridge: &Bridge, forwarded: &str, typed: &str) -> u16 {
     let response = bridge
         .http
         .post(format!("http://{}/api/login", bridge.addr))
         .header("X-Forwarded-For", forwarded)
-        .json(&json!({ "password": password }))
+        .json(&json!({ "password": typed }))
         .send()
         .await
         .unwrap();
