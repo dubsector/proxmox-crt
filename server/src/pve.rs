@@ -207,6 +207,9 @@ fn root_cause(e: &dyn std::error::Error) -> String {
     cause.to_string()
 }
 
+/// What a guest's power can be told to do.
+pub const POWER_ACTIONS: [&str; 3] = ["start", "shutdown", "stop"];
+
 /// One guest or node, as far as the bridge itself needs to know it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Guest {
@@ -386,6 +389,17 @@ impl Client {
             snapshot: serde_json::json!({ "t": now, "nodes": nodes, "guests": guests }),
             guests: refs,
         })
+    }
+
+    /// Starts the guest (`start`), asks it to shut down (`shutdown`) or
+    /// cuts its power (`stop`). Proxmox answers at once and does the work
+    /// as a task; a later reading shows how it went.
+    pub async fn power(&self, guest: &Guest, action: &str) -> Result<()> {
+        if !POWER_ACTIONS.contains(&action) {
+            return Err(err(format!("there is no power action called {action}")));
+        }
+        let path = format!("/nodes/{}/{}/{}/status/{action}", guest.node, guest.kind, guest.vmid);
+        self.post(&path, &[], "switching the guest").await.map(|_| ())
     }
 
     /// Opens the guest's terminal: the one `pct console` or a VM's serial

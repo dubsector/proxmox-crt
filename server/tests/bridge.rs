@@ -265,6 +265,63 @@ async fn the_feed_carries_readings_of_the_cluster() {
 }
 
 #[tokio::test]
+async fn the_power_route_starts_and_stops_a_guest() {
+    let mock = mock_pve::start("127.0.0.1:0").await;
+    let bridge = bridge("power").await;
+    let cookie = bridge.set_up(&mock).await;
+
+    // Not without logging in, and only the three actions there are.
+    assert_eq!(bridge.post("/api/guest/100/power", json!({ "action": "stop" }), None).await.0, 401);
+    assert_eq!(
+        bridge
+            .post("/api/guest/100/power", json!({ "action": "reboot" }), Some(&cookie))
+            .await
+            .0,
+        400
+    );
+    assert_eq!(
+        bridge
+            .post("/api/guest/5/power", json!({ "action": "start" }), Some(&cookie))
+            .await
+            .0,
+        404
+    );
+
+    let mut feed = bridge.socket("/api/feed", Some(&cookie)).await.unwrap();
+    async fn status_becomes(feed: &mut Socket, vmid: u64, want: &str) -> bool {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let Message::Text(text) = next(feed).await else { continue };
+                let message: Value = serde_json::from_str(text.as_str()).unwrap();
+                let guests = message["snapshot"]["guests"].as_array().unwrap().clone();
+                if guests.iter().any(|g| g["vmid"] == vmid && g["status"] == want) {
+                    break true;
+                }
+            }
+        })
+        .await
+            == Ok(true)
+    }
+    assert!(status_becomes(&mut feed, 100, "running").await);
+    assert_eq!(
+        bridge
+            .post("/api/guest/100/power", json!({ "action": "shutdown" }), Some(&cookie))
+            .await
+            .0,
+        200
+    );
+    assert!(status_becomes(&mut feed, 100, "stopped").await);
+    assert_eq!(
+        bridge
+            .post("/api/guest/100/power", json!({ "action": "start" }), Some(&cookie))
+            .await
+            .0,
+        200
+    );
+    assert!(status_becomes(&mut feed, 100, "running").await);
+}
+
+#[tokio::test]
 async fn a_console_carries_typing_up_and_output_down() {
     let mock = mock_pve::start("127.0.0.1:0").await;
     let bridge = bridge("console").await;

@@ -233,6 +233,17 @@ export function createDemoSource(options) {
       });
       emit();
     },
+    // The power switch, as the bridge has it: a moment later the guest is
+    // running or stopped.
+    power: function (vmid, action) {
+      setTimeout(function () {
+        guests.forEach(function (g) {
+          if (g.vmid === vmid) setStatus(g, action === "start" ? "running" : "stopped");
+        });
+        emit();
+      }, 900);
+      return Promise.resolve({ ok: true });
+    },
     snapshot: snapshot,
     // Opens a guest's terminal, as the bridge will: a toy shell here, so
     // the demo can be typed into. handlers: { data(text), note({ ready } |

@@ -130,6 +130,13 @@ export function createBridgeSource(options) {
       if (socket) socket.close();
       socket = null;
     },
+    // Starts a guest ("start"), shuts it down ("shutdown") or cuts its
+    // power ("stop"). Resolves to { ok } or { ok: false, error }.
+    power: function (vmid, action) {
+      return ask("guest/" + vmid + "/power", { action: action }).then(function (answer) {
+        return answer.ok ? { ok: true } : { ok: false, error: answer.body.error || "The bridge could not do that." };
+      });
+    },
     // Opens a guest's terminal. Same contract as the demo's.
     console: function (vmid, cols, rows, handlers) {
       var ws = new WebSocket(wsUrl("/api/console/" + vmid + "?cols=" + cols + "&rows=" + rows));

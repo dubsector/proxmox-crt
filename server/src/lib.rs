@@ -139,6 +139,7 @@ pub fn router(app: Arc<App>, client_dir: PathBuf) -> Router {
         .route("/api/logout", post(logout))
         .route("/api/feed", get(feed))
         .route("/api/console/{vmid}", get(console))
+        .route("/api/guest/{vmid}/power", post(power))
         .fallback_service(ServeDir::new(client_dir))
         .layer(header("x-content-type-options", "nosniff"))
         .layer(header("x-frame-options", "DENY"))
@@ -417,6 +418,52 @@ struct Size {
     rows: Option<u16>,
 }
 
+/// Where a guest lives, from the last reading or, failing that, a new one.
+async fn find_guest(app: &App, client: &pve::Client, vmid: u64) -> Option<pve::Guest> {
+    let known = app.guests.read().unwrap().iter().find(|g| g.vmid == vmid).cloned();
+    if known.is_some() {
+        return known;
+    }
+    // Nothing was read yet, or the guest is newer than the last reading.
+    let reading = client.read().await.ok()?;
+    let found = reading.guests.iter().find(|g| g.vmid == vmid).cloned();
+    *app.guests.write().unwrap() = reading.guests;
+    found
+}
+
+#[derive(Deserialize)]
+struct Power {
+    action: String,
+}
+
+/// Starts a guest, shuts it down or cuts its power. The feed is read again
+/// straight away and once more a little later, so the wall shows the change
+/// without waiting for its turn.
+async fn power(State(app): State<Arc<App>>, headers: HeaderMap, UrlPath(vmid): UrlPath<u64>, Json(form): Json<Power>) -> Response {
+    if let Err(no) = admit(&app, &headers) {
+        return no;
+    }
+    if !pve::POWER_ACTIONS.contains(&form.action.as_str()) {
+        return refuse(StatusCode::BAD_REQUEST, "The action is start, shutdown or stop.");
+    }
+    let Some(client) = app.client() else {
+        return refuse(StatusCode::CONFLICT, "This bridge is not set up yet.");
+    };
+    let Some(guest) = find_guest(&app, &client, vmid).await else {
+        return refuse(StatusCode::NOT_FOUND, format!("There is no guest {vmid}."));
+    };
+    if let Err(e) = client.power(&guest, &form.action).await {
+        return refuse(StatusCode::BAD_GATEWAY, e.0);
+    }
+    app.wake.notify_one();
+    let later = app.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        later.wake.notify_one();
+    });
+    reply(StatusCode::OK, json!({ "ok": true }))
+}
+
 async fn console(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
@@ -444,15 +491,7 @@ async fn run_console(mut socket: WebSocket, app: Arc<App>, vmid: u64, cols: u16,
     let Some(client) = app.client() else {
         return tell(&mut socket, json!({ "error": "The bridge is not set up yet." })).await;
     };
-    let mut guest = app.guests.read().unwrap().iter().find(|g| g.vmid == vmid).cloned();
-    if guest.is_none() {
-        // Nothing was read yet, or the guest is newer than the last reading.
-        if let Ok(reading) = client.read().await {
-            guest = reading.guests.iter().find(|g| g.vmid == vmid).cloned();
-            *app.guests.write().unwrap() = reading.guests;
-        }
-    }
-    let Some(guest) = guest else {
+    let Some(guest) = find_guest(&app, &client, vmid).await else {
         return tell(&mut socket, json!({ "error": format!("There is no guest {vmid}.") })).await;
     };
     let opened = match client.console(&guest).await {
