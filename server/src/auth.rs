@@ -5,6 +5,7 @@ use argon2::Argon2;
 use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use std::collections::{HashMap, VecDeque};
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -13,8 +14,12 @@ pub const SESSION_DAYS: u64 = 30;
 pub const MIN_PASSWORD: usize = 8;
 
 const SESSION_LIFE: Duration = Duration::from_secs(SESSION_DAYS * 86400);
-/// More wrong guesses than this in a minute and the next is not looked at.
+/// More wrong guesses than this from one address in a minute and its next
+/// is not looked at.
 const GUESSES_PER_MINUTE: usize = 5;
+/// The same for every address together, in case one guesser has many.
+const ALL_GUESSES_PER_MINUTE: usize = 60;
+const MINUTE: Duration = Duration::from_secs(60);
 
 /// Random bytes as lowercase hex.
 pub fn random_hex(bytes: usize) -> String {
@@ -49,7 +54,30 @@ pub fn same(a: &str, b: &str) -> bool {
 
 pub struct Sessions {
     live: Mutex<HashMap<String, Instant>>,
-    wrong: Mutex<VecDeque<Instant>>,
+    guesses: Mutex<Guesses>,
+}
+
+/// When guesses were made in the last minute: by each address, and by all.
+#[derive(Default)]
+struct Guesses {
+    by: HashMap<IpAddr, VecDeque<Instant>>,
+    all: VecDeque<Instant>,
+}
+
+fn forget_old(times: &mut VecDeque<Instant>, now: Instant) {
+    while times.front().is_some_and(|t| now.duration_since(*t) > MINUTE) {
+        times.pop_front();
+    }
+}
+
+/// Whom a guess is counted against. An IPv6 host has a whole /64 of
+/// addresses to guess from, so those count as one; an IPv4 address written
+/// as IPv6 counts as itself.
+fn guesser(from: IpAddr) -> IpAddr {
+    match from.to_canonical() {
+        IpAddr::V6(v6) => IpAddr::V6(Ipv6Addr::from_bits(v6.to_bits() & (u128::MAX << 64))),
+        v4 => v4,
+    }
 }
 
 impl Default for Sessions {
@@ -62,7 +90,7 @@ impl Sessions {
     pub fn new() -> Sessions {
         Sessions {
             live: Mutex::new(HashMap::new()),
-            wrong: Mutex::new(VecDeque::new()),
+            guesses: Mutex::new(Guesses::default()),
         }
     }
 
@@ -87,18 +115,34 @@ impl Sessions {
         self.live.lock().unwrap().remove(token);
     }
 
-    /// Whether another guess may be made now.
-    pub fn may_guess(&self) -> bool {
+    /// Whether `from` may make another guess now. If it may, the guess is
+    /// counted here and now, as a wrong one, so that guesses arriving
+    /// together cannot all get in before the first is found wrong.
+    pub fn may_guess(&self, from: IpAddr) -> bool {
+        let from = guesser(from);
         let now = Instant::now();
-        let mut wrong = self.wrong.lock().unwrap();
-        while wrong.front().is_some_and(|t| now.duration_since(*t) > Duration::from_secs(60)) {
-            wrong.pop_front();
+        let mut guesses = self.guesses.lock().unwrap();
+        let Guesses { by, all } = &mut *guesses;
+        forget_old(all, now);
+        by.retain(|_, times| {
+            forget_old(times, now);
+            !times.is_empty()
+        });
+        if all.len() >= ALL_GUESSES_PER_MINUTE || by.get(&from).is_some_and(|times| times.len() >= GUESSES_PER_MINUTE) {
+            return false;
         }
-        wrong.len() < GUESSES_PER_MINUTE
+        all.push_back(now);
+        by.entry(from).or_default().push_back(now);
+        true
     }
 
-    pub fn guessed_wrong(&self) {
-        self.wrong.lock().unwrap().push_back(Instant::now());
+    /// Takes back the count of a guess that turned out right.
+    pub fn guessed_right(&self, from: IpAddr) {
+        let mut guesses = self.guesses.lock().unwrap();
+        guesses.all.pop_back();
+        if let Some(times) = guesses.by.get_mut(&guesser(from)) {
+            times.pop_back();
+        }
     }
 }
 
@@ -142,14 +186,60 @@ mod tests {
         assert!(!sessions.valid(&token));
     }
 
+    fn ip(text: &str) -> IpAddr {
+        text.parse().unwrap()
+    }
+
     #[test]
-    fn wrong_guesses_run_out() {
+    fn wrong_guesses_run_out_for_the_one_guessing() {
         let sessions = Sessions::new();
         for _ in 0..GUESSES_PER_MINUTE {
-            assert!(sessions.may_guess());
-            sessions.guessed_wrong();
+            assert!(sessions.may_guess(ip("192.168.1.66")));
         }
-        assert!(!sessions.may_guess());
+        assert!(!sessions.may_guess(ip("192.168.1.66")));
+        assert!(!sessions.may_guess(ip("::ffff:192.168.1.66")));
+        // Someone else is not kept out by that.
+        assert!(sessions.may_guess(ip("192.168.1.10")));
+        assert!(sessions.may_guess(ip("fd00:0:0:1::10")));
+        // One host's many IPv6 addresses count together.
+        for i in 0..GUESSES_PER_MINUTE {
+            assert!(sessions.may_guess(ip(&format!("fd00::{i:x}"))));
+        }
+        assert!(!sessions.may_guess(ip("fd00::ffff")));
+    }
+
+    #[test]
+    fn a_right_guess_is_not_counted() {
+        let sessions = Sessions::new();
+        for _ in 0..GUESSES_PER_MINUTE * 3 {
+            assert!(sessions.may_guess(ip("192.168.1.10")));
+            sessions.guessed_right(ip("192.168.1.10"));
+        }
+        assert!(sessions.guesses.lock().unwrap().all.is_empty());
+    }
+
+    #[test]
+    fn guesses_made_at_once_do_not_all_get_in() {
+        let sessions = Sessions::new();
+        let admitted: usize = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..64)
+                .map(|_| scope.spawn(|| usize::from(sessions.may_guess(ip("192.168.1.66")))))
+                .collect();
+            threads.into_iter().map(|t| t.join().unwrap()).sum()
+        });
+        assert_eq!(admitted, GUESSES_PER_MINUTE);
+    }
+
+    #[test]
+    fn many_addresses_together_run_out_too() {
+        let sessions = Sessions::new();
+        let mut admitted = 0;
+        for i in 0..ALL_GUESSES_PER_MINUTE * 2 {
+            admitted += usize::from(sessions.may_guess(ip(&format!("10.0.{}.{}", i / 250, i % 250 + 1))));
+        }
+        assert_eq!(admitted, ALL_GUESSES_PER_MINUTE);
+        // Only addresses that have guessed are remembered.
+        assert_eq!(sessions.guesses.lock().unwrap().by.len(), ALL_GUESSES_PER_MINUTE);
     }
 
     #[test]

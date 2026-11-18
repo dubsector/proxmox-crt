@@ -265,6 +265,86 @@ async fn the_feed_carries_readings_of_the_cluster() {
 }
 
 #[tokio::test]
+async fn the_power_route_starts_and_stops_a_guest() {
+    let mock = mock_pve::start("127.0.0.1:0").await;
+    let bridge = bridge("power").await;
+    let cookie = bridge.set_up(&mock).await;
+
+    // Not without logging in, and only the three actions there are.
+    assert_eq!(bridge.post("/api/guest/100/power", json!({ "action": "stop" }), None).await.0, 401);
+    assert_eq!(
+        bridge
+            .post("/api/guest/100/power", json!({ "action": "reboot" }), Some(&cookie))
+            .await
+            .0,
+        400
+    );
+    assert_eq!(
+        bridge
+            .post("/api/guest/5/power", json!({ "action": "start" }), Some(&cookie))
+            .await
+            .0,
+        404
+    );
+
+    let mut feed = bridge.socket("/api/feed", Some(&cookie)).await.unwrap();
+    async fn status_becomes(feed: &mut Socket, vmid: u64, want: &str) -> bool {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let Message::Text(text) = next(feed).await else { continue };
+                let message: Value = serde_json::from_str(text.as_str()).unwrap();
+                let guests = message["snapshot"]["guests"].as_array().unwrap().clone();
+                if guests.iter().any(|g| g["vmid"] == vmid && g["status"] == want) {
+                    break true;
+                }
+            }
+        })
+        .await
+            == Ok(true)
+    }
+    assert!(status_becomes(&mut feed, 100, "running").await);
+    assert_eq!(
+        bridge
+            .post("/api/guest/100/power", json!({ "action": "shutdown" }), Some(&cookie))
+            .await
+            .0,
+        200
+    );
+    assert!(status_becomes(&mut feed, 100, "stopped").await);
+    assert_eq!(
+        bridge
+            .post("/api/guest/100/power", json!({ "action": "start" }), Some(&cookie))
+            .await
+            .0,
+        200
+    );
+    assert!(status_becomes(&mut feed, 100, "running").await);
+}
+
+#[tokio::test]
+async fn a_guest_that_moved_is_found_on_its_new_node() {
+    let mock = mock_pve::start("127.0.0.1:0").await;
+    let bridge = bridge("moved").await;
+    let cookie = bridge.set_up(&mock).await;
+    let power = |action: &'static str| bridge.post("/api/guest/100/power", json!({ "action": action }), Some(&cookie));
+
+    // No page watches the feed, so where the guest lives is read once, here.
+    assert_eq!(power("shutdown").await.0, 200);
+
+    mock.mock.move_to(100, mock_pve::NODES[1]);
+    let (status, body, _) = power("start").await;
+    assert_eq!(status, 200, "{body}");
+
+    mock.mock.move_to(100, mock_pve::NODES[2]);
+    let mut console = bridge.socket("/api/console/100", Some(&cookie)).await.unwrap();
+    let Message::Text(note) = next(&mut console).await else {
+        panic!("not a note")
+    };
+    assert_eq!(serde_json::from_str::<Value>(note.as_str()).unwrap()["ready"], true, "{note}");
+    until(&mut console, "root@pihole:~# ").await;
+}
+
+#[tokio::test]
 async fn a_console_carries_typing_up_and_output_down() {
     let mock = mock_pve::start("127.0.0.1:0").await;
     let bridge = bridge("console").await;

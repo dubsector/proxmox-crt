@@ -7,6 +7,19 @@
 
 var DIGIT = /^Numpad([0-9])$/;
 
+// What a key does while the guard over the power switch is up: "throw"
+// the switch, "cut" the power, or "shut" the guard with nothing switched;
+// null if it has nothing to do with the guard. A digit starts a monitor
+// number, and Enter with a number waiting (`pending`) finishes it, so
+// neither may throw the switch.
+export function guardedKey(code, pending) {
+  if (DIGIT.test(code)) return "shut";
+  if (code === "NumpadEnter") return pending ? "shut" : "throw";
+  if (code === "Power") return "throw";
+  if (code === "NumpadDivide") return "cut";
+  return null;
+}
+
 export function createKeypad(options) {
   var count = options.count || 0;
   var columns = options.columns || 1;
@@ -109,6 +122,13 @@ export function createKeypad(options) {
       count = n;
       if (cols) columns = cols;
       if (selected > count) selected = 0;
+    },
+    // Nothing is selected any more, and a number being typed is dropped
+    // along with its pause. Nobody is told of a selection.
+    clear: function () {
+      cancelTimer();
+      selected = 0;
+      setEntry("");
     },
     selected: function () {
       return selected;

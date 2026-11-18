@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>proxmox-crt</title>
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="style.css" />
@@ -13,6 +13,9 @@
     <div id="link" role="status" hidden></div>
     <div id="notice" hidden></div>
     <div id="consoles" aria-hidden="true"></div>
+    <button id="padToggle" type="button" aria-controls="pad" aria-expanded="false" hidden>123</button>
+    <div id="pad" role="group" aria-label="Keypad" hidden></div>
+    <div id="rotate" role="status">Turn the device on its side.</div>
     <script type="module" src="main.js"></script>
   </body>
 </html>
