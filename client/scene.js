@@ -347,19 +347,21 @@ export function createScene(options) {
       [-3.7, -6],
     ],
   });
+  // The desk lamp's cord leaves its base on the left, through the switch,
+  // and goes straight back, so it takes up little of the desk.
   var lampSwitch = createCordSwitch({
-    x: 12.7,
+    x: 12.3,
     y: DESK_Y,
-    z: 0.9,
-    turn: -0.47,
-    fromLamp: [[13.55, -0.75]],
+    z: -1.75,
+    turn: -1.88,
+    fromLamp: [[13.25, -1.6]],
     toWall: [
-      [11.75, 2.0],
-      [10.95, 0.7],
-      [11.2, -3.2],
-      [11.6, -6],
+      [11.2, -2.8],
+      [11.1, -4.4],
+      [11.3, -6],
     ],
   });
+
   scene.add(lavaSwitch.group, lampSwitch.group);
 
   // The terminal's keyboard, in front of it.
