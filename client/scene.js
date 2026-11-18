@@ -677,9 +677,11 @@ export function createScene(options) {
   // --- pointer -------------------------------------------------------------
   var raycaster = new Raycaster();
   var ndc = new Vector2();
-  var lavaPicks = lavaSwitch.pickables.concat(lavaLamp.pickables);
-  var lampPicks = lampSwitch.pickables.concat(props.lampPickables);
-  var pickable = [bank.faces, bank.cabinets, tube.mesh, deskCabinet].concat(room, controls.pickables, lavaPicks, lampPicks);
+  // Only a lamp's switch turns it on or off. The lamps themselves still
+  // stop a click, so it cannot reach what is behind them.
+  var lavaPicks = lavaSwitch.pickables;
+  var lampPicks = lampSwitch.pickables;
+  var pickable = [bank.faces, bank.cabinets, tube.mesh, deskCabinet].concat(room, controls.pickables, lavaPicks, lampPicks, lavaLamp.pickables, props.lampPickables);
 
   // The wall monitor number under a point of the window, or 0. The ray is
   // tested against the whole room, so the terminal in front of a monitor

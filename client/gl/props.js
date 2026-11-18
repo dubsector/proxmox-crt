@@ -121,7 +121,7 @@ export function createProps(options) {
 
   return {
     group: group,
-    // What takes a click, to switch the lamp.
+    // What a click over the lamp lands on, and stops at.
     lampPickables: lampMeshes,
     setLamp: function (on) {
       lampOn = !!on;
