@@ -8,7 +8,7 @@ import { wallCard, nodeCard, deskCard, WALL_COLS, WALL_ROWS, DESK_COLS, DESK_ROW
 import { createScene } from "./scene.js";
 
 var params = new URLSearchParams(location.search);
-var HUD = params.get("hud") === "1";
+var HUD = params.get("hud") === "1" || window.CRT_HUD === true;
 var reducedMotion = params.get("motion") === "0" || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 // How much CPU history the desk terminal's graph holds.
 var HISTORY = DESK_COLS - 4;
