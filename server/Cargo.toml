@@ -1,0 +1,26 @@
+[package]
+name = "proxmox-crt"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Serves the proxmox-crt page and bridges it to Proxmox VE"
+
+[dependencies]
+argon2 = "0.6.0"
+axum = { version = "0.8.9", features = ["ws"] }
+futures-util = "0.3.34"
+getrandom = "0.4.3"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "json", "form", "query"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "fs"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+toml = "1.2.1"
+tower-http = { version = "0.7.1", features = ["fs", "set-header"] }
+webpki-roots = "1.0.12"
+
+[dev-dependencies]
+axum-server = { version = "0.9.2", features = ["tls-rustls-no-provider"] }
+rcgen = "0.14.10"

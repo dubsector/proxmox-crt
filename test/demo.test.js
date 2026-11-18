@@ -5,7 +5,7 @@ import { createDemoSource } from "../client/demo.js";
 test("the demo cluster has the guests asked for, some of them stopped", function () {
   var snap = createDemoSource({ guests: 48, stopped: 3, seed: 5 }).snapshot();
   assert.equal(snap.guests.length, 48);
-  assert.equal(snap.nodes.length, 1);
+  assert.equal(snap.nodes.length, 3);
   assert.equal(snap.guests.filter(function (g) { return g.type === "qemu"; }).length, 2);
   assert.equal(new Set(snap.guests.map(function (g) { return g.vmid; })).size, 48);
   assert.ok(snap.guests.filter(function (g) { return g.status === "stopped"; }).length >= 3);
@@ -56,5 +56,5 @@ test("setStatus stops and starts a guest and tells subscribers", function () {
 test("an empty cluster is still a cluster", function () {
   var snap = createDemoSource({ guests: 0 }).snapshot();
   assert.deepEqual(snap.guests, []);
-  assert.equal(snap.nodes.length, 1);
+  assert.equal(snap.nodes.length, 3);
 });

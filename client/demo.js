@@ -41,6 +41,7 @@ export function createDemoSource(options) {
   var opts = options || {};
   var count = opts.guests === undefined ? 48 : opts.guests;
   var stopped = opts.stopped === undefined ? 3 : opts.stopped;
+  var nodeCount = Math.max(1, opts.nodes === undefined ? 3 : opts.nodes);
   var intervalMs = opts.intervalMs || 2000;
   var random = rng(opts.seed === undefined ? 220 : opts.seed);
   var listeners = [];
@@ -58,7 +59,7 @@ export function createDemoSource(options) {
       vmid: (isVm ? 900 : 100) + (isVm ? i - (count - VM_NAMES.length) : i),
       name: name,
       type: isVm ? "qemu" : "lxc",
-      node: "pve",
+      node: "pve" + (1 + (i % nodeCount)),
       status: "running",
       maxcpu: cores,
       maxmem: maxmem,
@@ -84,18 +85,21 @@ export function createDemoSource(options) {
     offs++;
   }
 
-  var node = {
-    node: "pve",
-    status: "online",
-    cpu: 0.1,
-    maxcpu: 16,
-    mem: 0,
-    maxmem: 64 * GIB,
-    disk: 180 * GIB,
-    maxdisk: 480 * GIB,
-    uptime: 61 * 86400,
-    loadavg: [1.2, 1.0, 0.9],
-  };
+  var nodes = [];
+  for (var n = 0; n < nodeCount; n++) {
+    nodes.push({
+      node: "pve" + (n + 1),
+      status: "online",
+      cpu: 0.1,
+      maxcpu: 16,
+      mem: 0,
+      maxmem: 64 * GIB,
+      disk: (120 + 30 * n) * GIB,
+      maxdisk: 480 * GIB,
+      uptime: (61 - 9 * n) * 86400,
+      loadavg: [1.2, 1.0, 0.9],
+    });
+  }
 
   // A stopped guest uses nothing; one just started has yet to.
   function setStatus(g, status) {
@@ -107,8 +111,8 @@ export function createDemoSource(options) {
 
   function advance(seconds) {
     t += seconds;
-    var usedCores = 0;
-    var usedMem = 0;
+    var usedCores = {};
+    var usedMem = {};
     for (var i = 0; i < guests.length; i++) {
       var g = guests[i];
       if (g.status !== "running") {
@@ -123,8 +127,8 @@ export function createDemoSource(options) {
       g.netin += Math.floor(g.rate * seconds * (0.3 + random() * 1.4));
       g.netout += Math.floor(g.rate * seconds * 0.4 * (0.3 + random() * 1.4));
       g.uptime += seconds;
-      usedCores += g.cpu * g.maxcpu;
-      usedMem += g.mem;
+      usedCores[g.node] = (usedCores[g.node] || 0) + g.cpu * g.maxcpu;
+      usedMem[g.node] = (usedMem[g.node] || 0) + g.mem;
     }
     // Every so often a guest is stopped, or a stopped one started, so the
     // wall has something to react to.
@@ -132,22 +136,24 @@ export function createDemoSource(options) {
       var pick = guests[Math.floor(random() * guests.length)];
       setStatus(pick, pick.status === "running" ? "stopped" : "running");
     }
-    node.cpu = clamp(usedCores / node.maxcpu + 0.02, 0, 1);
-    node.mem = Math.min(node.maxmem, usedMem + 6 * GIB);
-    node.uptime += seconds;
-    var load = node.cpu * node.maxcpu;
-    node.loadavg = [
-      node.loadavg[0] * 0.7 + load * 0.3,
-      node.loadavg[1] * 0.93 + load * 0.07,
-      node.loadavg[2] * 0.98 + load * 0.02,
-    ];
+    nodes.forEach(function (node) {
+      node.cpu = clamp((usedCores[node.node] || 0) / node.maxcpu + 0.02, 0, 1);
+      node.mem = Math.min(node.maxmem, (usedMem[node.node] || 0) + 6 * GIB);
+      node.uptime += seconds;
+      var load = node.cpu * node.maxcpu;
+      node.loadavg = [
+        node.loadavg[0] * 0.7 + load * 0.3,
+        node.loadavg[1] * 0.93 + load * 0.07,
+        node.loadavg[2] * 0.98 + load * 0.02,
+      ];
+    });
   }
 
   function snapshot() {
     return {
       t: t,
-      nodes: [
-        {
+      nodes: nodes.map(function (node) {
+        return {
           node: node.node,
           status: node.status,
           cpu: node.cpu,
@@ -158,8 +164,8 @@ export function createDemoSource(options) {
           maxdisk: node.maxdisk,
           uptime: node.uptime,
           loadavg: node.loadavg.slice(),
-        },
-      ],
+        };
+      }),
       guests: guests.map(function (g) {
         return {
           vmid: g.vmid,
@@ -228,5 +234,117 @@ export function createDemoSource(options) {
       emit();
     },
     snapshot: snapshot,
+    // Opens a guest's terminal, as the bridge will: a toy shell here, so
+    // the demo can be typed into. handlers: { data(text), note({ ready } |
+    // { error } | { closed }) }. Returns { send(text), resize(cols, rows),
+    // close() }.
+    console: function (vmid, cols, rows, handlers) {
+      var guest = null;
+      guests.forEach(function (g) {
+        if (g.vmid === vmid) guest = g;
+      });
+      return demoShell(guest, cols, rows, handlers);
+    },
+  };
+}
+
+function demoShell(guest, cols, rows, handlers) {
+  var open = true;
+  var line = "";
+  var escape = 0;
+  var prompt = guest ? "root@" + guest.name + ":~# " : "";
+  function out(text) {
+    if (open) handlers.data(text);
+  }
+  function hangUp(why) {
+    if (!open) return;
+    open = false;
+    handlers.note({ closed: why });
+  }
+  // Answered a moment later, as a real one is.
+  setTimeout(function () {
+    if (!open) return;
+    if (!guest) {
+      open = false;
+      handlers.note({ error: "There is no such guest." });
+    } else if (guest.type === "qemu" && guest.name.indexOf("win") === 0) {
+      open = false;
+      handlers.note({ error: "opening the console: Proxmox answered 500 unable to find a serial interface" });
+    } else {
+      handlers.note({ ready: true });
+      out("\r\nDebian GNU/Linux 13 " + guest.name + " tty1\r\n\r\n(a demo shell: try hostname, uptime, free, echo, clear, exit)\r\n\r\n" + prompt);
+    }
+  }, 150);
+
+  function run(command) {
+    var word = command.split(" ")[0];
+    if (command === "") return "";
+    if (command === "hostname") return guest.name + "\r\n";
+    if (command === "whoami") return "root\r\n";
+    if (command === "uname -a") return "Linux " + guest.name + " 6.14.8-2-pve #1 SMP PREEMPT_DYNAMIC x86_64 GNU/Linux\r\n";
+    if (command === "stty size") return rows + " " + cols + "\r\n";
+    if (command === "clear") return "\x1b[H\x1b[2J";
+    if (command === "uptime") {
+      var d = Math.floor(guest.uptime / 86400);
+      return " up " + d + " days, load average: " + (guest.cpu * guest.maxcpu).toFixed(2) + "\r\n";
+    }
+    if (command === "free") {
+      var mib = function (b) {
+        return String(Math.round(b / 1048576)).padStart(12);
+      };
+      return "       " + "total".padStart(12) + "used".padStart(12) + "free".padStart(12) + "\r\nMem:   " + mib(guest.maxmem) + mib(guest.mem) + mib(guest.maxmem - guest.mem) + "\r\n";
+    }
+    if (word === "echo") return command.slice(5) + "\r\n";
+    return "-bash: " + word + ": command not found\r\n";
+  }
+
+  return {
+    send: function (text) {
+      if (!open) return;
+      var reply = "";
+      for (var i = 0; i < text.length; i++) {
+        var ch = text[i];
+        // An arrow or function key arrives as an escape sequence, which
+        // this shell has no use for.
+        if (escape) {
+          escape = escape === 1 && (ch === "[" || ch === "O") ? 2 : escape === 2 && (ch < "@" || ch > "~") ? 2 : 0;
+          continue;
+        }
+        if (ch === "\x1b") {
+          escape = 1;
+        } else if (ch === "\r" || ch === "\n") {
+          var command = line.trim();
+          line = "";
+          reply += "\r\n";
+          if (command === "exit" || command === "logout") {
+            out(reply + "logout\r\n");
+            return hangUp("The console closed.");
+          }
+          reply += run(command) + prompt;
+        } else if (ch === "\x7f" || ch === "\b") {
+          if (line.length) {
+            line = line.slice(0, -1);
+            reply += "\b \b";
+          }
+        } else if (ch === "\x03") {
+          line = "";
+          reply += "^C\r\n" + prompt;
+        } else if (ch === "\x04" && !line) {
+          out(reply + "logout\r\n");
+          return hangUp("The console closed.");
+        } else if (ch >= " ") {
+          line += ch;
+          reply += ch;
+        }
+      }
+      if (reply) out(reply);
+    },
+    resize: function (c, r) {
+      cols = c;
+      rows = r;
+    },
+    close: function () {
+      open = false;
+    },
   };
 }

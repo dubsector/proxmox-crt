@@ -1,6 +1,6 @@
 // The room, in grey-box form: a rack wall of small monitors, a desk with the
-// terminal and a node monitor on it, and a seat to look at them from. Plain
-// boxes under plain lights for now; the modelled, baked office replaces the
+// terminal on it and a strip of node monitors above its keyboard, a computer room of lamps and
+// tape drives under the wall, and a seat to look at them from. Plain boxes under plain lights for now; the modelled, baked office replaces the
 // geometry here and nothing else.
 //
 // This file owns what is drawn and where. It knows nothing about Proxmox:
@@ -25,11 +25,12 @@ import {
   Euler,
   Color,
 } from "three";
-import { RASTER } from "./gl/raster.js";
+import { RASTER, faceToRaster } from "./gl/raster.js";
 import { paintGrid } from "./gl/textgrid.js";
 import { createTube, DECAY_SLOW_S } from "./gl/tube.js";
 import { createBank, createCabinetGeometry, CABINET } from "./gl/bank.js";
-import { PHOSPHORS, GLASS_T, EMISSION_GAIN } from "./gl/face.js";
+import { PHOSPHORS, GLASS_T, EMISSION_GAIN, faceHit } from "./gl/face.js";
+import { createMachines, MACHINE } from "./gl/machines.js";
 
 // Everything is in tube units (about 61 mm): the desk terminal's tube face
 // is 4 x 3 of them and sits at the origin, facing +Z.
@@ -44,6 +45,17 @@ var WALL_Z = -36;
 // showing over the top of the terminal from the seat.
 var WALL_BOTTOM_Y = 2.4;
 var DESK_Y = CABINET.bottom - 0.05;
+// The cabinets under the wall: how many stand either side of the terminal,
+// and how far from the middle the first begins (clear of the terminal as
+// seen from the seat).
+// The node monitors' strip above the keyboard: how big its sets are, how
+// far in front of the terminal they sit, and how far they lie back.
+var SIDE_SCALE = 0.34;
+var SIDE_GAP = 0.14;
+var SIDE_Z = 2.9;
+var SIDE_LEAN = 1.0;
+var MACHINES_A_SIDE = 2;
+var MACHINES_FROM = 13.4;
 // Each wall picture is half the desk terminal's raster each way, and holds
 // 13 x 4 characters of the 9 x 14 ROM at three times its size: big enough
 // to read from the seat.
@@ -96,11 +108,13 @@ function slab(w, h, d, x, y, z, material) {
 
 // options: { guests: how many wall monitors are wanted, nodes: how many
 // node monitors on the desk, reducedMotion, always: draw every frame,
-// onPick(number), onHover(number or 0) }
+// onPick(number), onHover(number or 0), onDeskPress({ col, row }) (return
+// true to follow the drag), onDeskDrag({ col, row }), onDeskRelease() }
 export function createScene(options) {
   var layout = wallLayout(options.guests);
   var wallCount = layout.columns * layout.rows;
-  var nodeCount = options.nodes || 0;
+  // A cabinet for each node, as far as there are cabinets.
+  var nodeCount = Math.min(options.nodes || 0, MACHINES_A_SIDE * 2);
   var reduced = !!options.reducedMotion;
 
   var canvas = document.createElement("canvas");
@@ -181,14 +195,33 @@ export function createScene(options) {
     var y = WALL_BOTTOM_Y + (layout.rows - 1 - row) * PITCH_Y;
     bank.place(i, matrix.compose(new Vector3(x, y, WALL_Z), upright, scale));
   }
-  // Node monitors stand on the desk either side of the terminal, the first
-  // on its right, each turned toward the seat.
-  for (var n = 0; n < nodeCount; n++) {
-    var side = n % 2 ? -1 : 1;
-    var rank = Math.floor(n / 2);
-    var turned = new Quaternion().setFromEuler(new Euler(0, -0.3 * side, 0));
-    var where = new Vector3(side * (5.3 + rank * 4.1), DESK_Y - CABINET.bottom * WALL_SCALE, -2.6 - rank * 1.2);
-    bank.place(wallCount + n, matrix.compose(where, turned, scale));
+  // Under the wall, either side of the terminal, stands the computer room:
+  // cabinets of lamps and tape drives. The first of them, left to right,
+  // each move as one node works; the rest idle.
+  var slots = [];
+  [-1, 1].forEach(function (side) {
+    for (var k = 0; k < MACHINES_A_SIDE; k++) {
+      var out = side < 0 ? MACHINES_A_SIDE - 1 - k : k;
+      slots.push({ x: side * (MACHINES_FROM + MACHINE.width / 2 + out * MACHINE.width), top: WALL_BOTTOM_Y - PITCH_Y / 2 - 1.0, z: WALL_Z + 0.2 });
+    }
+  });
+  var machines = createMachines({ slots: slots, still: reduced });
+  scene.add(machines.group);
+
+  // Node monitors are a strip of small sets in a sloped panel between the
+  // terminal and its keyboard, lying back to face whoever looks down at
+  // the keys: there to be glanced at, and nothing selects them.
+  if (nodeCount) {
+    var sideScale = new Vector3(SIDE_SCALE, SIDE_SCALE, SIDE_SCALE);
+    var setW = CABINET.halfW * 2 * SIDE_SCALE;
+    var rowW = nodeCount * (setW + SIDE_GAP) + SIDE_GAP;
+    var lean = new Quaternion().setFromEuler(new Euler(-SIDE_LEAN, 0, 0));
+    // Each set's face sits on the slope; its cabinet goes down into the panel.
+    var rise = new Vector3(0, -CABINET.bottom * SIDE_SCALE, 0).applyQuaternion(lean);
+    for (var n = 0; n < nodeCount; n++) {
+      var where = new Vector3(-rowW / 2 + SIDE_GAP + setW / 2 + n * (setW + SIDE_GAP), DESK_Y + 0.1, SIDE_Z).add(rise);
+      bank.place(wallCount + n, matrix.compose(where, lean, sideScale));
+    }
   }
 
   // --- what is on each screen ----------------------------------------------
@@ -374,8 +407,43 @@ export function createScene(options) {
     return 0;
   }
 
+  // Which character cell of the desk terminal is under the pointer, or
+  // null where it is not on the tube's face. A point on the face but outside
+  // the picture gives the nearest cell.
+  function deskCellAt(ev) {
+    var rect = canvas.getBoundingClientRect();
+    ndc.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    var hits = raycaster.intersectObjects(pickable, false);
+    if (!hits.length || hits[0].object !== tube.mesh) return null;
+    var dir = raycaster.ray.direction;
+    var face = faceHit(hits[0].point.x, hits[0].point.y, dir.x, dir.y, dir.z);
+    if (!face) return null;
+    var at = faceToRaster(face.px, face.py);
+    return {
+      col: Math.max(0, Math.min(RASTER.cols - 1, Math.floor(at.u * RASTER.cols))),
+      row: Math.max(0, Math.min(RASTER.rows - 1, Math.floor(at.v * RASTER.rows))),
+    };
+  }
+
+  // A press on the desk terminal's screen and the drag that follows it are
+  // a selection of its text, which is the page's business.
+  var pressing = false;
+  function onUp(ev) {
+    if (!pressing) return;
+    pressing = false;
+    if (canvas.hasPointerCapture && canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
+    if (options.onDeskRelease) options.onDeskRelease();
+  }
+
   var hovered = 0;
   function onMove(ev) {
+    if (pressing) {
+      var cell = deskCellAt(ev);
+      if (cell && options.onDeskDrag) options.onDeskDrag(cell);
+      wake(1);
+      return;
+    }
     var fy = ev.clientY / Math.max(window.innerHeight, 1);
     var fx = ev.clientX / Math.max(window.innerWidth, 1);
     if (fy > LOOK_DOWN_BELOW) lookDownGoal = 1;
@@ -392,10 +460,17 @@ export function createScene(options) {
   function onDown(ev) {
     if (ev.button !== 0) return;
     var over = monitorAt(ev);
-    if (over && options.onPick) options.onPick(over);
+    if (over && options.onPick) return options.onPick(over);
+    var cell = deskCellAt(ev);
+    if (cell && options.onDeskPress && options.onDeskPress(cell)) {
+      pressing = true;
+      if (canvas.setPointerCapture) canvas.setPointerCapture(ev.pointerId);
+    }
   }
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerdown", onDown);
+  canvas.addEventListener("pointerup", onUp);
+  canvas.addEventListener("pointercancel", onUp);
   window.addEventListener("resize", layoutCanvas);
 
   // --- frames --------------------------------------------------------------
@@ -429,6 +504,7 @@ export function createScene(options) {
     if (bank.update(dt)) moving = true;
     if (tube.update(dt)) moving = true;
     if (stepView(dt)) moving = true;
+    if (machines.update(dt)) moving = true;
 
     // The terminal lighting the desk, following the phosphor rather than
     // the signal: it keeps giving light for a moment after the beam moves on.
@@ -468,6 +544,12 @@ export function createScene(options) {
     },
     // Puts an 80 x 25 grid on the desk terminal.
     showDesk: showDesk,
+    // How hard node `number` is working (0..1, or -1 when it is down),
+    // which one cabinet's lamps and tape reels follow.
+    setNodeLoad: function (number, load) {
+      machines.setLoad(number - 1, load);
+    },
+    deskCellAt: deskCellAt,
     setSelected: setSelected,
     // "seat" or "keys" holds that view; null goes back to following the pointer.
     setView: function (view) {
@@ -502,9 +584,12 @@ export function createScene(options) {
       cancelAnimationFrame(rafId);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerdown", onDown);
+      canvas.removeEventListener("pointerup", onUp);
+      canvas.removeEventListener("pointercancel", onUp);
       window.removeEventListener("resize", layoutCanvas);
       tube.dispose();
       bank.dispose();
+      machines.dispose();
       room.forEach(function (m) {
         m.geometry.dispose();
       });
