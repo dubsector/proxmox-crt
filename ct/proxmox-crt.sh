@@ -38,7 +38,12 @@ function update_script() {
     ensure_dependencies build-essential
     NODE_VERSION="22" setup_nodejs
     RUST_PROFILE="minimal" setup_rust
+    # The fetch records the new commit straight away. Put the old one back until
+    # the new build is running, so that a failed build is tried again next time.
+    OLD_COMMIT="$(cat /root/.proxmox-crt 2>/dev/null || true)"
     CLEAN_INSTALL=1 fetch_and_deploy_gh_branch "proxmox-crt" "dubsector/proxmox-crt" "" "/opt/proxmox-crt-src"
+    NEW_COMMIT="$(cat /root/.proxmox-crt)"
+    echo "$OLD_COMMIT" >/root/.proxmox-crt
 
     msg_info "Building Proxmox-CRT"
     cd /opt/proxmox-crt-src
@@ -62,12 +67,13 @@ function update_script() {
 
     msg_info "Starting Service"
     systemctl start proxmox-crt
+    echo "$NEW_COMMIT" >/root/.proxmox-crt
     msg_ok "Started Service"
 
     cd ~
     remove_old_tool_version "rust"
     msg_info "Removing Build Tools"
-    remove_old_tool_version "nodejs"
+    remove_old_tool_version "nodejs" "nodesource"
     $STD apt purge -y build-essential
     $STD apt -y autoremove
     # Drop the version records too, or the engine puts the tools back by itself.

@@ -45,7 +45,7 @@ msg_ok "Created Service"
 cd ~
 remove_old_tool_version "rust"
 msg_info "Removing Build Tools"
-remove_old_tool_version "nodejs"
+remove_old_tool_version "nodejs" "nodesource"
 $STD apt purge -y build-essential
 # Drop the version records too, or the engine puts the tools back by itself.
 rm -rf /opt/proxmox-crt-src ~/.npm /var/cache/app-versions/rust_version.txt /var/cache/app-versions/nodejs_version.txt

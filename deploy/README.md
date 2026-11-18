@@ -137,9 +137,10 @@ Before relying on it, or sending it to community-scripts:
   `/var/cache/app-versions`, so that the engine does not reinstall them on its
   own. Check that an update still finds everything it needs afterwards, and
   that `apt update` is clean with the NodeSource entry gone.
-- **A failed update build.** The commit is recorded when the sources are
-  fetched, before the build. If the build then fails, the next `update` says
-  there is nothing to do; delete `/root/.proxmox-crt` and run it again.
+- **A failed update build.** The new commit is only recorded once the service
+  has restarted, so after a failed build the next `update` should build again.
+  The compilers and `/opt/proxmox-crt-src` stay installed until an update
+  succeeds. Not tried in a real container.
 - **arm64.** Not tried, so `var_arm64` is left unset and the user is asked.
 - **shellcheck** was not available where the scripts were written.
 
