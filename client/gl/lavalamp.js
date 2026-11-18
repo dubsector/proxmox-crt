@@ -35,8 +35,10 @@ export function createLavaLamp(options) {
   }
 
   // The base narrows to a waist and widens again to hold the glass.
-  add(new CylinderGeometry(0.3, 0.62, L.baseH * 0.6, 28), metal, L.baseH * 0.3);
-  add(new CylinderGeometry(L.glassLow + 0.04, 0.3, L.baseH * 0.4, 28), metal, L.baseH * 0.8);
+  // Its metal, which a baked room draws for itself.
+  var shell = [];
+  shell.push(add(new CylinderGeometry(0.3, 0.62, L.baseH * 0.6, 28), metal, L.baseH * 0.3));
+  shell.push(add(new CylinderGeometry(L.glassLow + 0.04, 0.3, L.baseH * 0.4, 28), metal, L.baseH * 0.8));
   var blobGeometry = new SphereGeometry(1, 20, 14);
   owned.push(blobGeometry);
   var blobs = [];
@@ -53,7 +55,7 @@ export function createLavaLamp(options) {
   // Drawn after the wax, which shows through it.
   var glass = add(new CylinderGeometry(L.glassHigh, L.glassLow, L.glassH, 28), liquid, L.baseH + L.glassH / 2);
   glass.renderOrder = 1;
-  add(new CylinderGeometry(0.12, L.glassHigh + 0.03, L.capH, 28), metal, L.baseH + L.glassH + L.capH / 2);
+  shell.push(add(new CylinderGeometry(0.12, L.glassHigh + 0.03, L.capH, 28), metal, L.baseH + L.glassH + L.capH / 2));
 
   var light = new PointLight(new Color(1.0, 0.35, 0.3), 2.2, 9, 1.6);
   light.position.y = L.baseH + L.glassH * 0.45;
@@ -111,6 +113,7 @@ export function createLavaLamp(options) {
 
   return {
     group: group,
+    shell: shell,
     // Moves the wax on by dt seconds. True while it is moving.
     update: function (dt) {
       var goal = on ? 1 : 0;

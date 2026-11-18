@@ -151,9 +151,11 @@ export function createControls(options) {
   switcher.position.set(options.box.x, deskY + BOX.h / 2, options.box.z);
   switcher.rotation.y = options.box.turn || 0;
   group.add(switcher);
-  box(switcher, BOX.w, BOX.h, BOX.d, 0, 0, 0, steel);
+  // What a baked room draws for itself: everything that neither moves nor lights.
+  var shell = [];
+  shell.push(box(switcher, BOX.w, BOX.h, BOX.d, 0, 0, 0, steel));
   // The readout's window.
-  box(switcher, 2.0, 1.45, 0.06, -0.42, 0.02, BOX.d / 2 + 0.01, dark);
+  shell.push(box(switcher, 2.0, 1.45, 0.06, -0.42, 0.02, BOX.d / 2 + 0.01, dark));
 
   var DIGIT = { w: 0.56, h: 1.0, t: 0.12, apart: 0.86 };
   var segmentGeometry = new BoxGeometry(1, 1, 0.02);
@@ -191,7 +193,7 @@ export function createControls(options) {
   // a toggle that is thrown up while the guest runs and down while it is
   // stopped, and the red cover, hinged along its top edge, that swings up
   // clear of it.
-  box(switcher, 0.7, 0.74, 0.04, 1.12, -0.3, BOX.d / 2 + 0.02, plate);
+  shell.push(box(switcher, 0.7, 0.74, 0.04, 1.12, -0.3, BOX.d / 2 + 0.02, plate));
   var lever = new Group();
   lever.position.set(1.12, -0.3, BOX.d / 2 + 0.05);
   switcher.add(lever);
@@ -251,7 +253,7 @@ export function createControls(options) {
   pad.position.set(options.keypad.x, deskY, options.keypad.z);
   group.add(pad);
   var padW = 4 * KEY_PITCH + 0.3;
-  box(pad, padW, 0.22, padW, 0, 0.11, 0, plate);
+  shell.push(box(pad, padW, 0.22, padW, 0, 0.11, 0, plate));
   var keyGeometry = new BoxGeometry(KEY_SIZE, 0.2, KEY_SIZE);
   var keyMaterial = new MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 });
   var keys = new InstancedMesh(keyGeometry, keyMaterial, codes.length);
@@ -284,6 +286,7 @@ export function createControls(options) {
   dial.position.set(options.dial.x, deskY, options.dial.z);
   group.add(dial);
   var dialPlate = box(dial, 2.2, 0.16, 2.2, 0, 0.08, 0, plate);
+  shell.push(dialPlate);
   var knob = new Group();
   knob.position.y = 0.16;
   dial.add(knob);
@@ -297,7 +300,9 @@ export function createControls(options) {
   // The marks its clicks line up with.
   for (var mark = 0; mark < 12; mark++) {
     var a = mark * DIAL_STEP;
-    box(dial, 0.07, 0.05, 0.16, Math.sin(a) * 0.98, 0.18, -Math.cos(a) * 0.98, cream).rotation.y = -a;
+    var tick = box(dial, 0.07, 0.05, 0.16, Math.sin(a) * 0.98, 0.18, -Math.cos(a) * 0.98, cream);
+    tick.rotation.y = -a;
+    shell.push(tick);
   }
   var dialGoal = 0;
   var dialAngle = 0;
@@ -310,17 +315,17 @@ export function createControls(options) {
   lock.position.set(options.lock.x, deskY, options.lock.z);
   lock.rotation.y = options.lock.turn || 0;
   // A button for a finger, not a fist.
-  lock.scale.setScalar(0.45);
+  lock.scale.setScalar(options.lock.scale || 0.45);
   group.add(lock);
-  box(lock, 2.3, 0.3, 2.6, 0, 0.15, 0, steel);
+  shell.push(box(lock, 2.3, 0.3, 2.6, 0, 0.15, 0, steel));
   var lockMaterial = new MeshBasicMaterial({ color: LOCK_OFF.clone() });
   owned.push(lockMaterial);
   var lockButton = box(lock, 1.3, 0.3, 1.3, 0, 0.42, 0.42, lockMaterial);
   // Yellow and black, as a thing not to be pressed lightly is edged.
   var hazard = new MeshStandardMaterial({ color: 0xd8b21c, roughness: 0.6 });
   owned.push(hazard);
-  box(lock, 1.7, 0.04, 1.7, 0, 0.31, 0.42, hazard);
-  box(lock, 1.48, 0.05, 1.48, 0, 0.315, 0.42, dark);
+  shell.push(box(lock, 1.7, 0.04, 1.7, 0, 0.31, 0.42, hazard));
+  shell.push(box(lock, 1.48, 0.05, 1.48, 0, 0.315, 0.42, dark));
   var lockLabel = lockTexture();
   if (lockLabel) {
     var lockLabelGeometry = new PlaneGeometry(2.0, 0.62);
@@ -338,6 +343,7 @@ export function createControls(options) {
 
   return {
     group: group,
+    shell: shell,
     // What a ray can hit that means something.
     pickables: [keys, knobMesh, dialPlate, guardMesh, leverMesh, lockButton],
     // The key code a hit on one of the pickables stands for: a keypad key,

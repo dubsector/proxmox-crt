@@ -118,8 +118,12 @@ export function createPanels(options) {
     parent.add(m);
     return m;
   }
+  // The racks' bodies and panels: what a baked room draws for itself.
+  var shell = [];
   function box(w, h, d, x, y, z, material) {
-    return add(group, new BoxGeometry(w, h, d), material, x, y, z);
+    var m = add(group, new BoxGeometry(w, h, d), material, x, y, z);
+    shell.push(m);
+    return m;
   }
 
   var matrix = new Matrix4();
@@ -302,6 +306,7 @@ export function createPanels(options) {
 
   return {
     group: group,
+    shell: shell,
     // What meter `m` of rack `i` reads, 0..1; null lets it wander.
     setMeter: function (i, m, value) {
       var n = state[i] && state[i].needles[m];

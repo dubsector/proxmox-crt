@@ -121,6 +121,8 @@ export function createProps(options) {
 
   return {
     group: group,
+    // Everything but the lamp's light, which a baked room draws for itself.
+    shell: [book, mug, headset].concat(lampMeshes),
     // What a click over the lamp lands on, and stops at.
     lampPickables: lampMeshes,
     setLamp: function (on) {
@@ -128,6 +130,10 @@ export function createProps(options) {
     },
     lampOn: function () {
       return lampOn;
+    },
+    // How far up the lamp's light is, 0..1, as it comes on or dies away.
+    lampLevel: function () {
+      return lampLevel;
     },
     // True while the lamp's light is changing.
     update: function (dt, still) {

@@ -140,11 +140,14 @@ export function createMachines(options) {
   var deckMat = new MeshStandardMaterial({ color: 0xc9c6b6, roughness: 0.65 });
   owned.push(bodyMat, panelMat, deckMat);
 
+  // The cabinets' bodies and panels: what a baked room draws for itself.
+  var shell = [];
   function box(w, h, d, x, y, z, material) {
     var m = new Mesh(new BoxGeometry(w, h, d), material);
     m.position.set(x, y, z);
     owned.push(m.geometry);
     group.add(m);
+    shell.push(m);
   }
 
   var lampsPer = M.lampRows * M.lampCols;
@@ -262,6 +265,8 @@ export function createMachines(options) {
 
   return {
     group: group,
+    // The parts that do not move (see setShell).
+    shell: shell,
     count: slots.length,
     // How hard cabinet i's node is working: 0..1, -1 when the node is
     // down, null when the cabinet has no node.

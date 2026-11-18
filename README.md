@@ -11,13 +11,14 @@ reuses.
 
 ## Where it stands
 
-The scene is still grey-box: plain boxes under plain lights. Behind it, the
-page now talks to a real Proxmox VE host through a small bridge, and the desk
+The room is modelled in Blender and its light baked into light maps (see
+`tools/blender/README.md`); what moves or lights up is drawn live on top.
+Without the baked files the page falls back to a grey-box room. Behind it, the
+page talks to a real Proxmox VE host through a small bridge, and the desk
 terminal is a real terminal on whichever guest is selected. What works:
 
-- A wall of small monitors, sized to the number of guests (4 x 3, 8 x 3 or
-  13 x 4), each showing a guest's number, name, CPU and memory. Spare monitors
-  stay off.
+- A wall of 13 x 4 small monitors, each showing a guest's number, name, CPU
+  and memory. Spare monitors stay off.
 - A stopped guest shows OFFLINE. When a guest stops or starts, its monitor
   switches off (the picture folds to a line, then a dot) and warms up again
   with the new picture.

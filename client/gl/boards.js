@@ -109,9 +109,11 @@ export function createBoards(options) {
     return m;
   }
 
+  // The boards' frames: what a baked room draws for itself.
+  var shell = [];
   // A board: its frame, and its chart, whose plotting area is returned.
   function board(at, title, across, down) {
-    add(new BoxGeometry(at.width, at.height, 0.5), frameMat, at.x, at.y, at.z - 0.25);
+    shell.push(add(new BoxGeometry(at.width, at.height, 0.5), frameMat, at.x, at.y, at.z - 0.25));
     var texture = chartTexture(title, across, down);
     var material = texture ? new MeshBasicMaterial({ map: texture }) : blankMat;
     if (texture) owned.push(material, texture);
@@ -193,6 +195,7 @@ export function createBoards(options) {
 
   return {
     group: group,
+    shell: shell,
     // How hard node i is working, 0..1 (below 0: it is down).
     setLoad: function (i, load) {
       if (!trends[i]) return;
