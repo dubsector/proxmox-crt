@@ -17,6 +17,10 @@ export var UNDERLINE = 8;
 var LEVEL_NORMAL = 184;
 var LEVEL_BOLD = 255;
 var LEVEL_DIM = 97;
+// What a coloured background glows at behind bright text: a dark colour and
+// a middling one.
+export var BACK_LOW = 46;
+export var BACK_MID = 92;
 var UNDERLINE_ROW = 12;
 
 var cache = {};
@@ -152,14 +156,19 @@ function glyphFor(ch) {
 export function createGrid(cols, rows) {
   var chars = new Array(cols * rows).fill(" ");
   var attrs = new Uint8Array(cols * rows);
+  // How hard the beam is driven where a cell's character is not: 0 for the
+  // dark screen.
+  var backs = new Uint8Array(cols * rows);
   var grid = {
     cols: cols,
     rows: rows,
     chars: chars,
     attrs: attrs,
+    backs: backs,
     clear: function () {
       chars.fill(" ");
       attrs.fill(0);
+      backs.fill(0);
       return grid;
     },
     // Writes text on one row from column x; what runs off the edge is cut.
@@ -171,6 +180,7 @@ export function createGrid(cols, rows) {
         if (cx < 0 || cx >= cols) continue;
         chars[y * cols + cx] = s[i];
         attrs[y * cols + cx] = attr || 0;
+        backs[y * cols + cx] = 0;
       }
       return grid;
     },
@@ -184,7 +194,7 @@ export function createGrid(cols, rows) {
     },
     // Everything on the screen as one string: what changed, changed here.
     key: function () {
-      return chars.join("") + "|" + Array.prototype.join.call(attrs, "");
+      return chars.join("") + "|" + Array.prototype.join.call(attrs, "") + "|" + Array.prototype.join.call(backs, ",");
     },
     // The rows as text, for tests and for the flat page.
     lines: function () {
@@ -215,8 +225,15 @@ export function paintGrid(grid, out, width, height, scale) {
       var attr = grid.attrs[idx];
       var inverse = (attr & INVERSE) !== 0;
       var underline = (attr & UNDERLINE) !== 0;
-      if (ch === " " && !inverse && !underline) continue;
-      var level = attr & BOLD ? LEVEL_BOLD : attr & DIM ? LEVEL_DIM : LEVEL_NORMAL;
+      var back = grid.backs[idx];
+      if (ch === " " && !inverse && !underline && !back) continue;
+      var fore = attr & BOLD ? LEVEL_BOLD : attr & DIM ? LEVEL_DIM : LEVEL_NORMAL;
+      // Inverse video swaps what the character and its ground are driven at.
+      if (inverse) {
+        var swap = fore;
+        fore = back;
+        back = swap;
+      }
       var glyph = ch === " " ? null : glyphFor(ch);
       var x0 = ox + col * cw;
       var y0 = oy + row * chh;
@@ -224,8 +241,8 @@ export function paintGrid(grid, out, width, height, scale) {
         for (var gx = 0; gx < FONT_W; gx++) {
           var lit = glyph ? glyph[gy * FONT_W + gx] === 1 : false;
           if (underline && gy === UNDERLINE_ROW) lit = true;
-          if (inverse) lit = !lit;
-          if (!lit) continue;
+          var level = lit ? fore : back;
+          if (!level) continue;
           for (var sy = 0; sy < s; sy++) {
             var py = y0 + gy * s + sy;
             if (py >= height) break;
