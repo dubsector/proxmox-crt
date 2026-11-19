@@ -65,7 +65,7 @@ var WALL_TEXT_SCALE = 3;
 var EYE = new Vector3(0, 2.8, 9);
 var VIEW = {
   seat: { pitch: -6, fov: 45 },
-  keys: { pitch: -29, fov: 44 },
+  keys: { pitch: -42, fov: 44 },
 };
 // The view is the viewer's to move: dragging turns the head, this far
 // either way and this far up and down (degrees), and it stays where it is
@@ -114,7 +114,8 @@ function slab(w, h, d, x, y, z, material) {
 // true to follow the drag), onDeskDrag({ col, row }), onDeskRelease(),
 // onDeskWheel(1 down or -1 up): the wheel over the desk terminal's screen,
 // onControl(code): a keypad key clicked, or the dial turned a notch (which
-// is the keypad's + or -) }
+// is the keypad's + or -), onKeyboard(code, ev): a key of the terminal's
+// keyboard clicked }
 export function createScene(options) {
   var layout = wallLayout(options.guests);
   var L = officeLayout();
@@ -355,7 +356,11 @@ export function createScene(options) {
     officeCase = office.terminalCase;
     officeLamp = office.lampParts;
     pickable.splice(pickable.indexOf(deskCabinet), 1);
+    keyboard.pickables.forEach(function (m) {
+      pickable.splice(pickable.indexOf(m), 1);
+    });
     pickable.push.apply(pickable, officeCase);
+    pickable.push.apply(pickable, office.keyMeshes);
     if (office.wallSets) pickable.push(office.wallSets);
     // The model's lamp stops a click as the plain one does; only its cord
     // switch turns it on or off.
@@ -693,7 +698,7 @@ export function createScene(options) {
   // stop a click, so it cannot reach what is behind them.
   var lavaPicks = lavaSwitch.pickables;
   var lampPicks = lampSwitch.pickables;
-  var pickable = [bank.faces, bank.cabinets, tube.mesh, deskCabinet].concat(room, controls.pickables, lavaPicks, lampPicks, lavaLamp.pickables, props.lampPickables);
+  var pickable = [bank.faces, bank.cabinets, tube.mesh, deskCabinet].concat(room, controls.pickables, lavaPicks, lampPicks, lavaLamp.pickables, props.lampPickables, keyboard.pickables);
 
   // The wall monitor number under a point of the window, or 0. The ray is
   // tested against the whole room, so the terminal in front of a monitor
@@ -841,7 +846,7 @@ export function createScene(options) {
   }
   function hover(ev) {
     var over = monitorAt(ev);
-    var control = !over && !!controlAt(ev, true);
+    var control = !over && (!!controlAt(ev, true) || !!keyAt(ev));
     if (over !== hovered || control !== overControl) {
       var was = hovered;
       hovered = over;
@@ -858,8 +863,18 @@ export function createScene(options) {
     var hits = raycaster.intersectObjects(pickable, false);
     return hits.length > 0 && (hits[0].object === deskCabinet || officeCase.indexOf(hits[0].object) >= 0);
   }
-  // A click or a tap: a monitor is picked, a control worked. True if it
-  // landed on either.
+  // The code of the terminal's keyboard key under the pointer, or null.
+  function keyAt(ev) {
+    var rect = canvas.getBoundingClientRect();
+    ndc.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    var hits = raycaster.intersectObjects(pickable, false);
+    if (!hits.length) return null;
+    var code = office ? office.keyCode(hits[0].object) : keyboard.codeAt(hits[0]);
+    return code === undefined ? null : code;
+  }
+  // A click or a tap: a monitor is picked, a control worked, a key typed.
+  // True if it landed on one.
   function press(ev) {
     var over = monitorAt(ev);
     if (over && options.onPick) {
@@ -881,6 +896,11 @@ export function createScene(options) {
     }
     if (code && options.onControl) {
       options.onControl(code);
+      return true;
+    }
+    var key = keyAt(ev);
+    if (key && options.onKeyboard) {
+      options.onKeyboard(key, ev);
       return true;
     }
     // The terminal's own case: the view locks on to it, or lets go.
@@ -932,7 +952,7 @@ export function createScene(options) {
   }
   // Twice on nothing in particular: back to the seat's own view.
   function onDouble(ev) {
-    if (deskLock || monitorAt(ev) || controlAt(ev) || deskCellAt(ev) || caseAt(ev)) return;
+    if (deskLock || monitorAt(ev) || controlAt(ev) || keyAt(ev) || deskCellAt(ev) || caseAt(ev)) return;
     resetView();
     if (options.onHold) options.onHold(!!hold);
   }
@@ -1057,6 +1077,7 @@ export function createScene(options) {
     },
     deskCellAt: deskCellAt,
     controlAt: controlAt,
+    keyAt: keyAt,
     // The switcher: two characters on its readout; where its dial points
     // (monitor `number` of `count`); the selected guest's power lamp ("on",
     // "off" or null); and a keypad key going down.
@@ -1083,6 +1104,10 @@ export function createScene(options) {
     // A key of the terminal's keyboard going down.
     typeKey: function (code) {
       if (office ? office.pressKey(code) : keyboard.press(code)) wake(0.6);
+    },
+    // A key of it held down, or let go.
+    holdKey: function (code, held) {
+      if (office ? office.holdKey(code, held) : keyboard.hold(code, held)) wake(0.6);
     },
     setSelected: setSelected,
     // "seat" gives the view back to the pointer, with nothing closed in on;

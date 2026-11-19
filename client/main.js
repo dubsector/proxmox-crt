@@ -10,6 +10,7 @@ import { findBridge, createBridgeSource } from "./bridge.js";
 import { createConsoles } from "./consoles.js";
 import { openGate, cardOpen } from "./gate.js";
 import { createSecurity } from "./security.js";
+import { keyBytes, MODIFIERS } from "./keymap.js";
 
 var params = new URLSearchParams(location.search);
 var HUD = params.get("hud") === "1" || window.CRT_HUD === true;
@@ -307,6 +308,7 @@ function build(snap) {
         keypad.pick(number);
       },
       onControl: switchKey,
+      onKeyboard: clickKey,
       // A right click holds the view still, and another lets it go.
       onHold: function (held) {
         flash(held ? "VIEW HELD  (right click lets it follow again)" : "VIEW FOLLOWS THE POINTER", held ? 2500 : 1200);
@@ -599,10 +601,93 @@ function buildPad() {
 }
 buildPad();
 
+// The desk's keyboard follows the real one: a key goes down while it is
+// held. This listens before anything else does, since the console's
+// terminal keeps the keys it uses to itself.
+var physical = {};
+window.addEventListener(
+  "keydown",
+  function (ev) {
+    // What is typed into a card (the password, a code) is for the card alone.
+    if (cardOpen() || !scene) return;
+    scene.typeKey(ev.code);
+    scene.holdKey(ev.code, true);
+    physical[ev.code] = true;
+    // A Shift or Ctrl clicked on the desk was for the next click, not this.
+    if (!MODIFIERS[ev.code]) letGo(false);
+  },
+  true
+);
+window.addEventListener(
+  "keyup",
+  function (ev) {
+    delete physical[ev.code];
+    if (scene && !isLatched(ev.code)) scene.holdKey(ev.code, false);
+  },
+  true
+);
+window.addEventListener("blur", function () {
+  Object.keys(physical).forEach(function (code) {
+    if (scene && !isLatched(code)) scene.holdKey(code, false);
+  });
+  physical = {};
+});
+
+// The modifiers clicked on the desk's keyboard, by the key that is held
+// down for each: Shift, Ctrl and Alt wait for the next key and are let go
+// after it, Lock stays until it is clicked again.
+var latched = { shift: null, ctrl: null, alt: null, lock: null };
+function isLatched(code) {
+  return Object.keys(latched).some(function (m) {
+    return latched[m] === code;
+  });
+}
+function letGo(lockToo) {
+  Object.keys(latched).forEach(function (m) {
+    if (!latched[m] || (m === "lock" && !lockToo)) return;
+    if (scene && !physical[latched[m]]) scene.holdKey(latched[m], false);
+    latched[m] = null;
+  });
+}
+
+// A click on a key of the desk's keyboard types it into the console on the
+// desk, as the key would. Its numpad is the switcher's, as the real one is.
+function clickKey(code, ev) {
+  if (cardOpen() || !scene) return;
+  if (/^Numpad/.test(code)) {
+    scene.typeKey(code);
+    switchKey(code);
+    return;
+  }
+  scene.typeKey(code);
+  var mod = MODIFIERS[code];
+  if (mod) {
+    var was = latched[mod];
+    if (was) scene.holdKey(was, false);
+    latched[mod] = was ? null : code;
+    if (!was) scene.holdKey(code, true);
+    return;
+  }
+  if (!typing()) {
+    letGo(false);
+    flash("KEYBOARD  select a running guest first");
+    return;
+  }
+  var vmid = current().vmid;
+  var data = keyBytes(code, {
+    shift: !!latched.shift || !!ev.shiftKey,
+    ctrl: !!latched.ctrl || !!ev.ctrlKey,
+    alt: !!latched.alt || !!ev.altKey,
+    lock: !!latched.lock,
+    appCursor: consoles.appCursor(vmid),
+  });
+  letGo(false);
+  if (data) consoles.type(vmid, data);
+}
+
 window.addEventListener("keydown", function (ev) {
   // What is typed into a card (the password, a code) is for the card alone.
   if (cardOpen()) return;
-  if (scene) scene.typeKey(ev.code);
   if (!keypad) return;
   var numpad = /^Numpad/.test(ev.code) || ev.code === "ScrollLock";
   // While a console is on the desk, every key but the numpad is the guest's.

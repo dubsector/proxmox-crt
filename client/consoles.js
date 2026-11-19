@@ -342,6 +342,20 @@ export function createConsoles(options) {
     },
     // Lets one go: its guest stopped or is gone.
     drop: drop,
+    // Types `data` into this console as though it came from its keyboard.
+    // False if it has no console.
+    type: function (vmid, data) {
+      var s = sessions[vmid];
+      if (!s) return false;
+      s.term.input(data, true);
+      return true;
+    },
+    // Whether the program in this console wants the cursor keys' other
+    // sequences (ESC O A, not ESC [ A).
+    appCursor: function (vmid) {
+      var s = sessions[vmid];
+      return !!(s && s.term.modes.applicationCursorKeysMode);
+    },
     // Sends the keyboard to this console.
     focus: function (vmid) {
       var s = sessions[vmid];

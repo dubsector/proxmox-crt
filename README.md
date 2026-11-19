@@ -40,7 +40,12 @@ terminal is a real terminal on whichever guest is selected. What works:
   minutes. A row of lit signs runs along the top, and the side walls have
   racks of their own. A wide window shows more of all this, and so does
   turning the view.
-- The terminal's keyboard on the desk, whose keys go down as you type; a
+- The terminal's keyboard on the desk, whose keys go down and stay down
+  while you hold them. Its keys can be clicked too, and type into the
+  console on the desk as the real ones would, by what their caps say
+  (F11 is Escape, as its cap says). Shift, Ctrl and Compose (Alt) wait for
+  the key clicked next, Lock stays on until it is clicked again, and the
+  numpad is the switcher's, as yours is. A
   lava lamp; and what a shift leaves lying about: a logbook and pen, a mug,
   a headset and a desk lamp, which is terminal's own. Each lamp has a switch
   in its cord on the desk: click the switch to turn it on or off. The lava
@@ -392,7 +397,8 @@ Query parameters:
 | `client/gl/bank.js` | Many small monitors in two draw calls, one array-texture layer each. |
 | `client/gl/machines.js` | The cabinets under the wall: lamps and tape reels, two draw calls. |
 | `client/gl/controls.js` | The switcher box, keypad and dial on the desk. |
-| `client/gl/keyboard.js` | The terminal's keyboard. |
+| `client/gl/keyboard.js` | The terminal's keyboard, in grey-box form. |
+| `client/keymap.js` | What a click on a key of the desk's keyboard sends to the console. |
 | `client/gl/panels.js` | The racks beside the wall: clocks, status lamps, meters, scopes. |
 | `client/gl/lavalamp.js` | The lava lamp. |
 | `client/gl/props.js` | The logbook, mug, headset and desk lamp. |
@@ -410,7 +416,7 @@ Query parameters:
 | `client/gate.js` | The setup card, the password and the second step after it, and the provider's button. |
 | `client/security.js` | The sign-in settings card and the corner button that opens it. |
 | `client/passkey.js` | Passkeys in the browser: the bridge's JSON to the browser's buffers and back. |
-| `test/` | Unit tests for the keypad, the cards, the demo cluster, the passkey conversions and the gate. |
+| `test/` | Unit tests for the keypad, the cards, the demo cluster, the passkey conversions, the gate and what the desk's keyboard sends. |
 | `server/src/lib.rs` | The bridge: routes, the feed, the console proxy. |
 | `server/src/pve.rs` | The Proxmox API client: token, pinned certificate, terminal proxy. |
 | `server/src/auth.rs`, `server/src/config.rs` | Password and sessions; the settings file. |

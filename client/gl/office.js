@@ -32,6 +32,24 @@ var EMISSIVE_TOWARD_WHITE = 0.35;
 var KEY_DOWN_S = 0.03;
 var KEY_UP_S = 0.07;
 var KEY_STRIKE_S = 0.09;
+// The PC keys this keyboard has no key for go down on the one where it
+// sits: Escape on F11 (ESC), Alt on Compose Character, F1 to F5 on the
+// terminal's own keys above, and the numpad's top row on PF1 to PF4.
+var KEY_STAND_INS = {
+  Escape: "F11",
+  AltLeft: "VT_Compose",
+  AltRight: "VT_Compose",
+  ControlRight: "ControlLeft",
+  F1: "VT_HoldScreen",
+  F2: "VT_PrintScreen",
+  F3: "VT_SetUp",
+  F4: "VT_DataTalk",
+  F5: "VT_Break",
+  NumLock: "VT_PF1",
+  NumpadDivide: "VT_PF2",
+  NumpadMultiply: "VT_PF3",
+  NumpadAdd: "NumpadComma",
+};
 
 export function officeAvailable() {
   return ASSETS.sizes.length > 0 && !!ASSETS.files["office.glb"];
@@ -335,12 +353,15 @@ export function buildOffice(loaded, legends) {
 
   // The keys: each dips by its travel when its code is typed.
   var keys = keyNodes.map(function (n) {
-    return { node: n, code: n.userData.code, rest: n.position.y, travel: n.userData.travel || 0, pos: 0, struck: 0 };
+    return { node: n, code: n.userData.code, rest: n.position.y, travel: n.userData.travel || 0, pos: 0, struck: 0, held: false };
   });
   var keyByCode = {};
   keys.forEach(function (k) {
     keyByCode[k.code] = k;
   });
+  function keyFor(code) {
+    return keyByCode[code] || keyByCode[KEY_STAND_INS[code]] || null;
+  }
 
   // The terminal's own case, for the click that locks the view on it.
   var terminalCase = ["Collar", "Housing", "Plinth", "SideControls", "Nameplate", "NameplateText", "PowerButton"]
@@ -387,11 +408,24 @@ export function buildOffice(loaded, legends) {
     setPowerLed: function (on) {
       if (leds.PowerLED) leds.PowerLED.color.set(on ? LED_ON : LED_OFF);
     },
+    // The keyboard's keys, for clicks, and the code of one of them.
+    keyMeshes: keyNodes,
+    keyCode: function (mesh) {
+      return mesh && mesh.userData ? mesh.userData.code : undefined;
+    },
     // A key of the keyboard going down for a moment. True if it has one.
     pressKey: function (code) {
-      var k = keyByCode[code];
+      var k = keyFor(code);
       if (!k) return false;
       k.struck = KEY_STRIKE_S;
+      return true;
+    },
+    // A key held down (a key the real keyboard holds, or a Shift that was
+    // clicked and waits for its key), or let go. True if it has one.
+    holdKey: function (code, held) {
+      var k = keyFor(code);
+      if (!k || k.held === !!held) return !!k;
+      k.held = !!held;
       return true;
     },
     // Moves the keys; true while any is moving.
@@ -403,7 +437,7 @@ export function buildOffice(loaded, legends) {
           k.struck = Math.max(0, k.struck - dt);
           moving = true;
         }
-        var goal = k.struck > 0 ? 1 : 0;
+        var goal = k.struck > 0 || k.held ? 1 : 0;
         if (k.pos === goal) continue;
         k.pos += (goal - k.pos) * (1 - Math.exp((-3 * dt) / (goal ? KEY_DOWN_S : KEY_UP_S)));
         if (Math.abs(goal - k.pos) < 0.01) k.pos = goal;
