@@ -938,7 +938,7 @@ async fn the_password_is_changed_with_the_old_one_and_closes_the_other_sessions(
         .await;
     assert_eq!(status, 200, "{body}");
     let saved = config::Config::load(&bridge.config).unwrap().password_hash.unwrap();
-    assert!(proxmox_crt::auth::verify_password(new, &saved));
+    assert!(!auth_hash_matches(&saved));
     assert_eq!(bridge.state(Some(&cookie)).await["authed"], true);
     assert_eq!(bridge.state(Some(&other)).await["authed"], false);
 
