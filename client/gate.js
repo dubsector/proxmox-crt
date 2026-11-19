@@ -120,7 +120,7 @@ export function openGate(state) {
       showCard(
         gate,
         "PROXMOX-CRT",
-        "This wall is set up to be reached over https, at its public address (public_url in the bridge's settings). Open it there to log in: over plain http, as here, the browser does not keep the log-in.",
+        "Open this page at its https address (public_url in the bridge's settings) to sign in. Signing in does not work over plain http.",
         []
       );
       return;
@@ -136,7 +136,7 @@ export function openGate(state) {
     }
 
     function login(message) {
-      var intro = "This wall can open consoles on your guests, so it asks who is there.";
+      var intro = "Sign in to continue.";
       // The way in through the provider is a plain link: the bridge sends
       // the browser on to the provider, and the provider sends it back.
       var provider = state.oidc ? [el("a", { class: "gate-way", href: "api/oidc/start", text: state.oidc.label || "Sign in with single sign-on" })] : [];
@@ -150,12 +150,12 @@ export function openGate(state) {
           "PROXMOX-CRT",
           intro,
           [password.row],
-          "Log in",
+          "Sign in",
           function (fail) {
             ask("login", { password: password.input.value }).then(function (r) {
               if (r.ok && r.body.second_factor) second(r.body.second_factor);
               else if (r.ok) done();
-              else fail(r.body.error || "That did not work.");
+              else fail(r.body.error || "Something went wrong. Try again.");
             });
           },
           provider
@@ -171,7 +171,7 @@ export function openGate(state) {
     function second(factors, way) {
       // The bridge says why the password is wanted again: its few minutes
       // are over, or too many codes were wrong.
-      var over = "That took too long. Enter the password again.";
+      var over = "Your sign-in timed out. Enter your password again.";
       var startOver = link("Start over", function () {
         login();
       });
@@ -199,15 +199,15 @@ export function openGate(state) {
       return card(
         "SECOND STEP",
         recovery
-          ? "Enter one of the recovery codes you were given when the authenticator app was set up. Each works once."
-          : "Enter the six-digit code your authenticator app shows for proxmox-crt.",
+          ? "Enter one of your recovery codes. Each code works once."
+          : "Enter the 6-digit code from your authenticator app.",
         [code.row],
         "Verify",
         function (fail) {
           ask("login/totp", { code: code.input.value }).then(function (r) {
             if (r.ok) return done();
             if (r.status === 401) return login(r.body.error || over);
-            fail(r.body.error || "That did not work.");
+            fail(r.body.error || "Something went wrong. Try again.");
           });
         },
         after
@@ -226,20 +226,20 @@ export function openGate(state) {
         }
         return card(
           "SECOND STEP",
-          "Use one of the passkeys you added for this wall. The browser will ask for it.",
+          "Sign in with a passkey you added earlier. Your browser will prompt you.",
           [],
           "Use a passkey",
           function (fail) {
             if (!passkeysWork()) return fail(NO_PASSKEYS);
             ask("login/passkey/start").then(function (r) {
               if (r.status === 401) return login(r.body.error || over);
-              if (!r.ok) return fail(r.body.error || "That did not work.");
+              if (!r.ok) return fail(r.body.error || "Something went wrong. Try again.");
               signWithPasskey(r.body.options).then(
                 function (signed) {
                   ask("login/passkey/finish", { credential: signed }).then(function (r) {
                     if (r.ok) return done();
                     if (r.status === 401) return login(r.body.error || over);
-                    fail(r.body.error || "That did not work.");
+                    fail(r.body.error || "Something went wrong. Try again.");
                   });
                 },
                 function (e) {
@@ -254,15 +254,15 @@ export function openGate(state) {
     }
 
     function setup() {
-      var code = field("Setup code", "code", { type: "text", spellcheck: "false", placeholder: "XXXX-XXXX" }, "Printed in the bridge's log: journalctl -u proxmox-crt");
-      var url = field("Proxmox address", "url", { type: "text", spellcheck: "false", placeholder: "192.168.1.10" }, "The host the web interface is on. Port 8006 unless you say otherwise.");
+      var code = field("Setup code", "code", { type: "text", spellcheck: "false", placeholder: "XXXX-XXXX" }, "Find it in the log: journalctl -u proxmox-crt");
+      var url = field("Proxmox address", "url", { type: "text", spellcheck: "false", placeholder: "192.168.1.10" }, "Where your Proxmox web interface is. Port 8006 is used unless you add another.");
       var tokenId = field("API token ID", "token_id", { type: "text", spellcheck: "false", placeholder: "crt@pve!wall" });
-      var secret = field("API token secret", "token_secret", { type: "password", autocomplete: "off" }, "Kept by the bridge. It never comes back to a browser.");
-      var password = field("Password for this page", "password", { type: "password", autocomplete: "new-password", minlength: "8" }, "At least 8 characters.");
-      var again = field("Password again", "again", { type: "password", autocomplete: "new-password" });
+      var secret = field("API token secret", "token_secret", { type: "password", autocomplete: "off" }, "Stored by the bridge and never sent back to the browser.");
+      var password = field("Choose a password", "password", { type: "password", autocomplete: "new-password", minlength: "8" }, "At least 8 characters.");
+      var again = field("Confirm password", "again", { type: "password", autocomplete: "new-password" });
       var help = el("details", {}, [
         el("summary", { text: "How to make the token" }),
-        el("p", { text: "In a shell on the Proxmox host. The last command prints the secret, once." }),
+        el("p", { text: "Run these in a shell on the Proxmox host. The last command shows the secret only once." }),
         el("pre", { text: TOKEN_HELP }),
       ]);
       var fingerprint = null;
@@ -280,11 +280,11 @@ export function openGate(state) {
       }
 
       function send(fail) {
-        if (password.input.value !== again.input.value) return fail("The two passwords differ.");
+        if (password.input.value !== again.input.value) return fail("The passwords do not match.");
         ask("setup", values()).then(function (r) {
           if (r.ok && r.body.confirm_fingerprint) return confirm(r.body.confirm_fingerprint, r.body.url);
           if (r.ok) return done();
-          fail(r.body.error || "That did not work.");
+          fail(r.body.error || "Something went wrong. Try again.");
         });
       }
 
@@ -294,7 +294,7 @@ export function openGate(state) {
         var shown = el("pre", { class: "gate-print", text: print.replace(/((?:[0-9A-F]{2}:){16})/, "$1\n") });
         card(
           "CHECK THE CERTIFICATE",
-          host + " signs its own certificate, as Proxmox does out of the box. Compare this fingerprint with the one Proxmox shows under your node, System, Certificates (pve-ssl.pem). If they match, the bridge will talk to that certificate and no other.",
+          host + " uses a self-signed certificate, which is normal for Proxmox. Check that this fingerprint matches the one under your node > System > Certificates (pve-ssl.pem). If it does, the bridge will trust only this certificate.",
           [shown],
           "They match",
           function (fail) {
@@ -304,7 +304,7 @@ export function openGate(state) {
               fingerprint = null;
               form();
               var error = gate.querySelector(".gate-error");
-              if (error) error.textContent = r.body.error || "That did not work.";
+              if (error) error.textContent = r.body.error || "Something went wrong. Try again.";
             });
           }
         );
@@ -313,7 +313,7 @@ export function openGate(state) {
       function form() {
         card(
           "SET UP PROXMOX-CRT",
-          "Point the wall at your Proxmox host. This is asked once and saved by the bridge.",
+          "Connect to your Proxmox host. You only need to do this once.",
           [code.row, url.row, tokenId.row, secret.row, help, password.row, again.row],
           "Connect",
           send

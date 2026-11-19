@@ -83,20 +83,20 @@ export function createSecurity(options) {
       if (!host) return;
       var rows = [];
       if (!r.ok) {
-        rows.push(el("p", { class: "gate-error", text: r.body.error || "The bridge did not say what is set up." }));
+        rows.push(el("p", { class: "gate-error", text: r.body.error || "Could not load your sign-in settings." }));
       } else {
         var passkeys = r.body.passkeys || [];
-        if (!r.body.totp && !passkeys.length) rows.push(el("p", { text: "The password alone opens the wall. A second step can be added to it here." }));
+        if (!r.body.totp && !passkeys.length) rows.push(el("p", { text: "Only a password is needed to sign in. You can add a second step here." }));
         if (r.body.totp) {
           var left = r.body.recovery;
-          rows.push(el("p", { text: "Authenticator app: on. After the password, the wall asks for the app's code. " + left + " recovery code" + (left === 1 ? "" : "s") + " left." }));
+          rows.push(el("p", { text: "Authenticator app: on. You are asked for a code after your password. " + left + " recovery code" + (left === 1 ? "" : "s") + " left." }));
           rows.push(action("New recovery codes", renew));
           rows.push(action("Remove the authenticator app", remove));
         } else {
           rows.push(el("p", { text: "Authenticator app: off." }));
           rows.push(action("Set up an authenticator app", enrol));
         }
-        rows.push(el("p", { text: passkeys.length ? "Passkeys: after the password, the wall takes any of these." : "Passkeys: none." }));
+        rows.push(el("p", { text: passkeys.length ? "Passkeys: any of these can be used after your password." : "Passkeys: none." }));
         passkeys.forEach(function (one) {
           rows.push(
             action("Remove " + one.name + " (added " + added(one) + ")", function () {
@@ -105,7 +105,7 @@ export function createSecurity(options) {
           );
         });
         // Where a passkey cannot be added, say why rather than offer it.
-        if (!r.body.passkeys_possible) rows.push(el("p", { text: "Passkeys need the page to be reached over https at its public address: set public_url in the bridge's settings." }));
+        if (!r.body.passkeys_possible) rows.push(el("p", { text: "Passkeys need this page opened at its https address. Set public_url in the bridge's settings." }));
         else if (!passkeysWork()) rows.push(el("p", { text: NO_PASSKEYS }));
         else rows.push(action("Add a passkey", addPasskey));
         // Single sign-on is set up in the bridge's settings file, so here
@@ -116,16 +116,16 @@ export function createSecurity(options) {
               text:
                 "Single sign-on: on, through " +
                 r.body.oidc.issuer +
-                ". Signing in there needs no second step here: the provider asks for its own." +
-                (r.body.password_login === false ? " Logging in by password is turned off, so nothing above is asked for." : ""),
+                ". No second step is asked for here, since the provider handles its own." +
+                (r.body.password_login === false ? " Password sign-in is turned off, so the settings above are not used." : ""),
             })
           );
         } else {
-          rows.push(el("p", { text: "Single sign-on: off. It is turned on in the bridge's settings file." + (r.body.oidc_possible ? "" : " It needs public_url there too.") }));
+          rows.push(el("p", { text: "Single sign-on: off. Turn it on in the bridge's settings file." + (r.body.oidc_possible ? "" : " It needs public_url there too.") }));
         }
       }
       rows.push(action("Log out", logout));
-      showCard(host, "SIGN-IN SETTINGS", "How this wall makes sure it is you.", rows, "Close", function () {
+      showCard(host, "SIGN-IN SETTINGS", "How you sign in to this page.", rows, "Close", function () {
         lower();
       });
     });
@@ -152,7 +152,7 @@ export function createSecurity(options) {
         ask(path, { password: password.input.value }, method).then(function (r) {
           if (!host) return;
           if (r.ok) then(r.body);
-          else fail(r.body.error || "That did not work.");
+          else fail(r.body.error || "Something went wrong. Try again.");
         });
       },
       [link("Back", home)]
@@ -162,7 +162,7 @@ export function createSecurity(options) {
   function enrol() {
     withPassword(
       "SET UP AN AUTHENTICATOR APP",
-      "An authenticator app on your phone shows a new six-digit code every half minute, and the wall will ask for it after the password. Enter the password to begin.",
+      "An authenticator app on your phone shows a new 6-digit code every 30 seconds. You will enter it after your password. Enter your password to begin.",
       "Continue",
       "second-factor/totp/start",
       "POST",
@@ -178,14 +178,14 @@ export function createSecurity(options) {
     showCard(
       host,
       "SCAN THIS WITH THE APP",
-      "Scan the picture with your authenticator app, or type the secret under it into the app by hand (time-based, SHA-1, 6 digits, 30 seconds). Then enter the code the app shows.",
+      "Scan the QR code with your authenticator app, or enter the secret below it by hand (time-based, SHA-1, 6 digits, 30 seconds). Then enter the code the app shows.",
       [picture, el("pre", { class: "gate-print", text: grouped(body.secret) }), code.row],
       "Turn on",
       function (fail) {
         ask("second-factor/totp/confirm", { code: code.input.value }).then(function (r) {
           if (!host) return;
           if (r.ok) codes(r.body.recovery, "THE AUTHENTICATOR APP IS ON");
-          else fail(r.body.error || "That did not work.");
+          else fail(r.body.error || "Something went wrong. Try again.");
         });
       },
       [link("Cancel", home)]
@@ -199,7 +199,7 @@ export function createSecurity(options) {
     var text = list.join("\n");
     var copy = link("Copy the codes", function () {
       copyText(text, host).then(function (ok) {
-        copy.textContent = ok ? "Copied" : "Could not copy: select them and copy by hand";
+        copy.textContent = ok ? "Copied" : "Could not copy. Select the codes and copy them by hand.";
         // The older way of copying takes the focus with it when it goes.
         if (host && host.contains(copy)) copy.focus();
       });
@@ -207,7 +207,7 @@ export function createSecurity(options) {
     showCard(
       host,
       title,
-      "These recovery codes are shown this once. Each one works a single time in place of the app's code, for when the phone is lost. Keep them somewhere safe that is not the phone.",
+      "These recovery codes are shown only once. Each one can be used once instead of an app code, in case you lose your phone. Keep them somewhere safe, not on your phone.",
       [el("pre", { class: "gate-print gate-codes", text: text })],
       "I have saved them",
       home,
@@ -224,7 +224,7 @@ export function createSecurity(options) {
   function remove() {
     withPassword(
       "REMOVE THE AUTHENTICATOR APP",
-      "After this the password alone opens the wall, and the recovery codes stop working.",
+      "After this, only your password is needed to sign in, and your recovery codes stop working.",
       "Remove",
       "second-factor/totp",
       "DELETE",
@@ -241,24 +241,24 @@ export function createSecurity(options) {
   // the bridge's challenge, and hands the bridge its public half.
   function addPasskey() {
     var password = field("Password", "password", { type: "password", autocomplete: "current-password" });
-    var name = field("Name", "name", { type: "text", autocomplete: "off", maxlength: "40", placeholder: "Phone" }, "To tell this passkey from the others.");
+    var name = field("Name", "name", { type: "text", autocomplete: "off", maxlength: "40", placeholder: "Phone" }, "Helps you tell your passkeys apart.");
     name.input.removeAttribute("required");
     showCard(
       host,
       "ADD A PASSKEY",
-      "A passkey is kept by your phone, your computer or a security key, and the wall will take it after the password in place of a code. The browser will ask where to keep it.",
+      "A passkey is stored on your phone, computer or security key, and can be used after your password instead of a code. Your browser will ask where to save it.",
       [password.row, name.row],
       "Add",
       function (fail) {
         ask("second-factor/passkey/start", { password: password.input.value, name: name.input.value }).then(function (r) {
           if (!host) return;
-          if (!r.ok) return fail(r.body.error || "That did not work.");
+          if (!r.ok) return fail(r.body.error || "Something went wrong. Try again.");
           makePasskey(r.body.options).then(
             function (made) {
               ask("second-factor/passkey/finish", { credential: made }).then(function (r) {
                 if (!host) return;
                 if (r.ok) home();
-                else fail(r.body.error || "That did not work.");
+                else fail(r.body.error || "Something went wrong. Try again.");
               });
             },
             function (e) {
@@ -274,7 +274,7 @@ export function createSecurity(options) {
   function removePasskey(one) {
     withPassword(
       "REMOVE A PASSKEY",
-      one.name + " will no longer be taken after the password. It stays on the device that keeps it until it is deleted there too.",
+      one.name + " can no longer be used to sign in. It stays on the device that holds it until you delete it there too.",
       "Remove",
       "second-factor/passkey/" + encodeURIComponent(one.id),
       "DELETE",
