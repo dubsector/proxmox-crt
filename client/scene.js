@@ -43,6 +43,7 @@ import { createBoards } from "./gl/boards.js";
 import { createProps } from "./gl/props.js";
 import { createCordSwitch } from "./gl/cordswitch.js";
 import { officeAvailable, pickMapSize, loadOffice, buildOffice, wallCellAt } from "./gl/office.js";
+import { createCeiling, roomLevel } from "./gl/ceiling.js";
 import { drawLegends } from "./gl/legends.js";
 import { officeLayout, WALL, WALL_SCALE, PITCH_X, PITCH_Y, WALL_Z, WALL_BOTTOM_Y, DESK_Y, DESK, FLOOR_Y, SIDE_GAP, SIDE_Z, SIDE_LEAN, SIDE_RACKS, nodeSetScale } from "./layout.js";
 
@@ -309,6 +310,18 @@ export function createScene(options) {
   var wallTint = new Color();
   var phosphor = new Color().fromArray(PHOSPHORS[options.phosphor] || PHOSPHORS.green);
 
+  // The ceiling lights' start-up, once the office is in.
+  var ceilingLights = null;
+  // How bright the plain room's lights are for the live parts, per unit of
+  // the room pass's level.
+  var LIVE_AMBIENT = 0.35;
+  var LIVE_CEILING = 0.55;
+  function setCeiling(level) {
+    office.setRoom(level);
+    ambient.intensity = LIVE_AMBIENT * level;
+    ceiling.intensity = LIVE_CEILING * level;
+  }
+
   function useOffice(loaded) {
     var keyNodes = [];
     loaded.gltf.scene.traverse(function (o) {
@@ -332,10 +345,11 @@ export function createScene(options) {
     tube.mesh.quaternion.copy(office.tubeQuaternion);
     tube.mesh.updateMatrixWorld(true);
     deskEye.copy(DESK_EYE).applyQuaternion(office.tubeQuaternion);
-    // The plain room's own lights now only light the live parts, which sit
-    // in a room that is mostly dark.
-    ambient.intensity = 0.35;
-    ceiling.intensity = 0.55;
+    // The room starts dark and its ceiling lights flicker on (gl/ceiling.js).
+    // The plain room's own lights now only light the live parts, and follow
+    // the ceiling so those sit in the same light as the baked room.
+    ceilingLights = createCeiling(reduced);
+    setCeiling(roomLevel(0));
     // What a click can land on: the model's terminal and wall of sets, in
     // place of the plain cabinet and the wall's cabinets.
     officeCase = office.terminalCase;
@@ -992,6 +1006,11 @@ export function createScene(options) {
     glow.intensity = GLASS_T * EMISSION_GAIN * screenLevel * 70;
     if (office) {
       if (office.update(dt)) moving = true;
+      if (ceilingLights && !ceilingLights.done()) {
+        var lit = ceilingLights.step(dt);
+        setCeiling(lit.level);
+        if (lit.changing) moving = true;
+      }
       office.setScreenLight(screenTint.copy(phosphor).multiplyScalar(GLASS_T * EMISSION_GAIN * screenLevel * SCREEN_GLOW_GAIN));
       office.setWallLight(wallTint.copy(phosphor).multiplyScalar(GLASS_T * EMISSION_GAIN * bank.light()));
       office.setLamp(props.lampLevel());
