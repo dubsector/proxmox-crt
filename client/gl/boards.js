@@ -187,7 +187,9 @@ export function createBoards(options) {
     if (signs) {
       var signMat = new MeshBasicMaterial({ map: signs });
       owned.push(signMat, signs);
-      add(new PlaneGeometry(options.signs.width, options.signs.height), signMat, 0, options.signs.y, options.signs.z);
+      // A little in front of where the strip is: a baked room's housing
+      // for the signs has its face right there, and the two would fight.
+      add(new PlaneGeometry(options.signs.width, options.signs.height), signMat, 0, options.signs.y, options.signs.z + 0.05);
     }
   }
 
