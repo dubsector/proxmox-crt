@@ -28,13 +28,12 @@ the container's console (`pct enter <id>` on the Proxmox host).
 ## The LXC scripts
 
 `ct/proxmox-crt.sh` runs on the Proxmox host and makes a Debian 13 container
-(2 cores, 2048 MB, 4 GB, unprivileged). `install/proxmox-crt-install.sh` runs
-inside it: it installs Node.js 22, Rust and a C compiler, clones the default
-branch, builds the page and the bridge, installs them, then removes the
-compilers and the sources again.
-
-The memory is for the Rust build. Once installed, the container can be given
-less; an update needs the 2048 MB back.
+(1 core, 512 MB, 2 GB, unprivileged). `install/proxmox-crt-install.sh` runs
+inside it: it downloads the latest
+[release](https://github.com/dubsector/proxmox-crt/releases) for the
+container's architecture (about 13 MB, the bridge as a static binary plus the
+built page and the unit) and installs it. Nothing is compiled in the
+container, so it needs no compilers and no build memory.
 
 They are written for [community-scripts](https://github.com/community-scripts/ProxmoxVE)
 and use its engine, so they do not run on their own. Line 2 of the `ct/`
@@ -57,9 +56,16 @@ New scripts go to [DevScripts](https://github.com/community-scripts/DevScripts)
 first. When these are sent there, line 2 has to name that repository instead.
 
 To update, run `update` in the container (`pct enter <id>` on the Proxmox
-host). It compares the installed commit, kept in `/root/.proxmox-crt`, with
-the default branch; if they differ it rebuilds, replaces the bridge, the
-page and the unit, and restarts the service. The settings are left alone.
+host). It compares the installed version, kept in `/root/.proxmox-crt`, with
+the latest release; if they differ it downloads that release, replaces the
+bridge, the page and the unit, and restarts the service. The settings are
+left alone. The new files go in while the old bridge is still serving, and
+only once the download has unpacked, so a failed download changes nothing.
+
+A container from before the releases (it built the bridge itself, and
+`/root/.proxmox-crt` holds a commit) takes the latest release on its next
+`update`, and that update also removes any Node.js, Rust or sources a build
+left behind. It can then be given 512 MB.
 
 A container made before line 2 named this repository looks for the scripts
 elsewhere, and its `update` says `No update script found for 'proxmox-crt'`.
@@ -71,6 +77,27 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/dubsector/proxmox-crt/ma
 
 That run also sets the container's `update` command right, so it works by
 itself from then on.
+
+## Making a release
+
+The installs and updates take the latest release, so a change on `main`
+reaches containers only once it is released:
+
+1. Raise `version` in `server/Cargo.toml` and `package.json` (and run
+   `cargo update -p proxmox-crt --offline` in `server/` and `npm install
+   --package-lock-only`, so the lock files carry it too). Merge that.
+2. Tag the merge commit with the same version and push the tag:
+
+   ```sh
+   git tag v0.4.0
+   git push origin v0.4.0
+   ```
+
+`.github/workflows/release.yml` checks the tag against both versions, builds
+the bridge for amd64 and arm64 (static musl binaries) and the page, and
+publishes `proxmox-crt-linux-amd64.tar.gz`, `proxmox-crt-linux-arm64.tar.gz`
+and `SHA256SUMS` as the release. It takes a few minutes; until it finishes,
+`update` still sees the previous release.
 
 ## By hand on Debian
 
@@ -126,25 +153,24 @@ To serve on another address, set `listen` in the settings file, or add
 The install has run from a checkout on a Proxmox VE 9.2 host, into a Debian
 13 container, through to the setup card and a console. The rest has not:
 
-- **The update:** change `main`, run `update`, see the new build serving and
+- **The releases:** the first tag, the release workflow on GitHub's runners
+  (the amd64 build and the unpack into a running install were tried locally;
+  the arm64 runner was not), and an install and an `update` from a release in
+  a real container.
+- **The update:** release a new version, run `update`, see it serving and
   the settings kept.
 - **The hardening in an unprivileged container.** `ProtectSystem=strict`,
   `PrivateDevices` and the others need mount namespaces, which an unprivileged
   LXC only has with nesting on (the community-scripts default). If the service
   fails with status 226, that is where to look.
-- **Memory and disk.** 2048 MB and 4 GB are estimates: a release build here
-  left 350 MB in `target/`, and the compilers add about 1.5 GB while they are
-  installed. Watch the first build for an out-of-memory kill.
-- **Removing the compilers.** The install script uses the engine's
-  `remove_old_tool_version` and deletes its records in
-  `/var/cache/app-versions`, so that the engine does not reinstall them on its
-  own. Check that an update still finds everything it needs afterwards, and
-  that `apt update` is clean with the NodeSource entry gone.
-- **A failed update build.** The new commit is only recorded once the service
-  has restarted, so after a failed build the next `update` should build again.
-  The compilers and `/opt/proxmox-crt-src` stay installed until an update
-  succeeds. Not tried in a real container.
-- **arm64.** Not tried, so `var_arm64` is left unset and the user is asked.
+- **Moving an old container over.** Its first `update` removes the build
+  tools with the engine's `remove_old_tool_version` and deletes their records
+  in `/var/cache/app-versions`. Check that `apt update` is clean afterwards,
+  with the NodeSource entry gone.
+- **A failed update.** The engine keeps a `.pending` marker beside
+  `/root/.proxmox-crt` until a run finishes, so the next `update` tries again.
+- **arm64.** A release is built for it but none has run, so `var_arm64` is
+  left unset and the user is asked.
 - **shellcheck** was not available where the scripts were written.
 
 Where the scripts depart from the community-scripts guide, which a reviewer
@@ -155,9 +181,7 @@ will ask about:
   that can open consoles, so it is kept unprivileged.
 - The unit is copied from `deploy/` in the sources instead of written inline,
   so there is one copy of it.
-- The compilers are removed after the build. Most scripts there keep them.
-- The guide asks for an application with 1,000 stars, six months of history
-  and release tarballs. With releases, the scripts could fetch a built bridge
-  and page with `fetch_and_deploy_gh_release` and would need no compilers.
+- The guide asks for an application with 1,000 stars and six months of
+  history. The release tarballs it asks for are there.
 - Submission also needs `json/proxmox-crt.json` (name, port 8086, resources,
   notes), which is not written yet.

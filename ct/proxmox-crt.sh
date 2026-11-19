@@ -10,10 +10,9 @@ source "$_cs_boot" 2>/dev/null || source <(curl -fsSL "${COMMUNITY_SCRIPTS_CORE_
 
 APP="Proxmox-CRT"
 var_tags="${var_tags:-proxmox;dashboard}"
-var_cpu="${var_cpu:-2}"
-# RAM is sized for the Rust release build; the running bridge needs far less.
-var_ram="${var_ram:-2048}"
-var_disk="${var_disk:-4}"
+var_cpu="${var_cpu:-1}"
+var_ram="${var_ram:-512}"
+var_disk="${var_disk:-2}"
 var_os="${var_os:-debian}"
 var_version="${var_version:-13}"
 #var_arm64="${var_arm64:-no}" # unset = ask the user; set yes/no only when verified
@@ -43,51 +42,30 @@ function update_script() {
   check_container_storage
   check_container_resources
 
-  if check_for_gh_branch "proxmox-crt" "dubsector/proxmox-crt"; then
-    ensure_dependencies build-essential
-    NODE_VERSION="22" setup_nodejs
-    RUST_PROFILE="minimal" setup_rust
-    # The fetch records the new commit straight away. Put the old one back until
-    # the new build is running, so that a failed build is tried again next time.
-    OLD_COMMIT="$(cat /root/.proxmox-crt 2>/dev/null || true)"
-    CLEAN_INSTALL=1 fetch_and_deploy_gh_branch "proxmox-crt" "dubsector/proxmox-crt" "" "/opt/proxmox-crt-src"
-    NEW_COMMIT="$(cat /root/.proxmox-crt)"
-    echo "$OLD_COMMIT" >/root/.proxmox-crt
+  if check_for_gh_release "proxmox-crt" "dubsector/proxmox-crt"; then
+    # Swapped in while the bridge runs: the old files are removed only once the
+    # new release has unpacked, so a failed download leaves it as it was.
+    CLEAN_INSTALL=1 fetch_and_deploy_gh_release "proxmox-crt" "dubsector/proxmox-crt" "prebuild" "latest" "/opt/proxmox-crt" "proxmox-crt-linux-$(dpkg --print-architecture).tar.gz"
 
-    msg_info "Building Proxmox-CRT"
-    cd /opt/proxmox-crt-src
-    $STD npm ci
-    $STD npm run build
-    cd /opt/proxmox-crt-src/server
-    CARGO_BUILD_JOBS="$(get_parallel_jobs)" $STD cargo build --release --locked
-    msg_ok "Built Proxmox-CRT"
-
-    msg_info "Stopping Service"
-    systemctl stop proxmox-crt
-    msg_ok "Stopped Service"
-
-    msg_info "Updating Proxmox-CRT"
-    install -m 755 /opt/proxmox-crt-src/server/target/release/proxmox-crt /opt/proxmox-crt/proxmox-crt
-    rm -rf /opt/proxmox-crt/client
-    cp -r /opt/proxmox-crt-src/dist /opt/proxmox-crt/client
-    install -m 644 /opt/proxmox-crt-src/deploy/proxmox-crt.service /etc/systemd/system/proxmox-crt.service
+    msg_info "Restarting Service"
+    install -m 644 /opt/proxmox-crt/proxmox-crt.service /etc/systemd/system/proxmox-crt.service
     systemctl daemon-reload
-    msg_ok "Updated Proxmox-CRT"
+    systemctl restart proxmox-crt
+    msg_ok "Restarted Service"
 
-    msg_info "Starting Service"
-    systemctl start proxmox-crt
-    echo "$NEW_COMMIT" >/root/.proxmox-crt
-    msg_ok "Started Service"
-
-    cd ~
-    remove_old_tool_version "rust"
-    msg_info "Removing Build Tools"
-    remove_old_tool_version "nodejs" "nodesource"
-    $STD apt purge -y build-essential
-    $STD apt -y autoremove
-    # Drop the version records too, or the engine puts the tools back by itself.
-    rm -rf /opt/proxmox-crt-src ~/.npm /var/cache/app-versions/rust_version.txt /var/cache/app-versions/nodejs_version.txt
-    msg_ok "Removed Build Tools"
+    # Containers made before the releases built the bridge in place. Clear out
+    # whatever a build that did not finish left behind.
+    if [[ -d /opt/proxmox-crt-src || -d "$HOME/.cargo" || -d "$HOME/.rustup" ]]; then
+      msg_info "Removing Old Build Tools"
+      remove_old_tool_version "rust" 2>/dev/null || true
+      remove_old_tool_version "nodejs" "nodesource" 2>/dev/null || true
+      if dpkg -s build-essential >/dev/null 2>&1; then
+        $STD apt purge -y build-essential
+      fi
+      $STD apt -y autoremove
+      rm -rf /opt/proxmox-crt-src ~/.npm /var/cache/app-versions/rust_version.txt /var/cache/app-versions/nodejs_version.txt
+      msg_ok "Removed Old Build Tools"
+    fi
     msg_ok "Updated successfully!"
   fi
   exit
