@@ -101,6 +101,8 @@ export function wallLayout() {
 // picture is taken to be when it lights the room (as terminal's scene.js).
 var ASSET_BASE = "assets/";
 var SCREEN_GLOW_GAIN = 3.0;
+// The terminal's push-push power switch latches in over about this long.
+var BUTTON_PRESS_S = 0.08;
 
 function slab(w, h, d, x, y, z, material) {
   var m = new Mesh(new BoxGeometry(w, h, d), material);
@@ -115,7 +117,8 @@ function slab(w, h, d, x, y, z, material) {
 // onDeskWheel(1 down or -1 up): the wheel over the desk terminal's screen,
 // onControl(code): a keypad key clicked, or the dial turned a notch (which
 // is the keypad's + or -), onKeyboard(code, ev): a key of the terminal's
-// keyboard clicked }
+// keyboard clicked, onDeskPower(on): the desk terminal switched off or on at
+// its power button }
 export function createScene(options) {
   var layout = wallLayout(options.guests);
   var L = officeLayout();
@@ -306,6 +309,12 @@ export function createScene(options) {
   var officeError = null;
   var officeCase = [];
   var officeLamp = [];
+  var officeButton = [];
+  // The desk terminal's power: a display toggle, like a real monitor's
+  // switch. The console behind it keeps running and keeps taking keys.
+  var deskOn = true;
+  // Where the power switch's cap is: 0 = out (off), 1 = latched in (on).
+  var buttonPos = 1;
   // The light the room's pictures throw, as the baked maps want it.
   var screenTint = new Color();
   var wallTint = new Color();
@@ -355,6 +364,9 @@ export function createScene(options) {
     // place of the plain cabinet and the wall's cabinets.
     officeCase = office.terminalCase;
     officeLamp = office.lampParts;
+    officeButton = office.powerButton;
+    office.setPowerLed(deskOn);
+    office.setButton(buttonPos);
     pickable.splice(pickable.indexOf(deskCabinet), 1);
     keyboard.pickables.forEach(function (m) {
       pickable.splice(pickable.indexOf(m), 1);
@@ -365,6 +377,7 @@ export function createScene(options) {
     // The model's lamp stops a click as the plain one does; only its cord
     // switch turns it on or off.
     pickable.push.apply(pickable, officeLamp);
+    pickable.push.apply(pickable, officeButton);
     wake(2);
   }
 
@@ -730,6 +743,8 @@ export function createScene(options) {
     raycaster.setFromCamera(ndc, camera);
     var hits = raycaster.intersectObjects(pickable, false);
     if (!hits.length || hits[0].object !== tube.mesh) return null;
+    // A set that is off has no picture to point at.
+    if (tube.power.state !== "on") return null;
     // In the tube's own space, which the baked office turns.
     var p = tube.mesh.worldToLocal(tubePoint.copy(hits[0].point));
     var dir = tubeDir.copy(raycaster.ray.direction).applyQuaternion(tubeInverse.copy(tube.mesh.quaternion).invert());
@@ -846,7 +861,7 @@ export function createScene(options) {
   }
   function hover(ev) {
     var over = monitorAt(ev);
-    var control = !over && (!!controlAt(ev, true) || !!keyAt(ev));
+    var control = !over && (!!controlAt(ev, true) || !!keyAt(ev) || buttonAt(ev));
     if (over !== hovered || control !== overControl) {
       var was = hovered;
       hovered = over;
@@ -854,6 +869,26 @@ export function createScene(options) {
       canvas.style.cursor = over || control ? "pointer" : "";
       if (over !== was && options.onHover) options.onHover(over);
     }
+  }
+  // Whether the terminal's power switch is what is under the pointer.
+  function buttonAt(ev) {
+    if (!officeButton.length) return false;
+    var rect = canvas.getBoundingClientRect();
+    ndc.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    var hits = raycaster.intersectObjects(pickable, false);
+    return hits.length > 0 && officeButton.indexOf(hits[0].object) >= 0;
+  }
+  // Switches the desk terminal off or on: the raster collapses to a line
+  // and a dot, or the tube warms up, as terminal's set does.
+  function setDeskPower(on) {
+    on = !!on;
+    if (on === deskOn) return;
+    deskOn = on;
+    tube.setPower(on, reduced);
+    if (office) office.setPowerLed(on);
+    if (options.onDeskPower) options.onDeskPower(on);
+    wake(reduced ? 0.5 : 7);
   }
   // Whether the terminal's case is what is under the pointer.
   function caseAt(ev) {
@@ -896,6 +931,10 @@ export function createScene(options) {
     }
     if (code && options.onControl) {
       options.onControl(code);
+      return true;
+    }
+    if (buttonAt(ev)) {
+      setDeskPower(!deskOn);
       return true;
     }
     var key = keyAt(ev);
@@ -952,7 +991,7 @@ export function createScene(options) {
   }
   // Twice on nothing in particular: back to the seat's own view.
   function onDouble(ev) {
-    if (deskLock || monitorAt(ev) || controlAt(ev) || keyAt(ev) || deskCellAt(ev) || caseAt(ev)) return;
+    if (deskLock || monitorAt(ev) || controlAt(ev) || keyAt(ev) || deskCellAt(ev) || caseAt(ev) || buttonAt(ev)) return;
     resetView();
     if (options.onHold) options.onHold(!!hold);
   }
@@ -1026,6 +1065,13 @@ export function createScene(options) {
     glow.intensity = GLASS_T * EMISSION_GAIN * screenLevel * 70;
     if (office) {
       if (office.update(dt)) moving = true;
+      var buttonGoal = deskOn ? 1 : 0;
+      if (buttonPos !== buttonGoal) {
+        buttonPos = reduced ? buttonGoal : buttonPos + (buttonGoal - buttonPos) * (1 - Math.exp((-3 * dt) / BUTTON_PRESS_S));
+        if (Math.abs(buttonGoal - buttonPos) < 0.01) buttonPos = buttonGoal;
+        office.setButton(buttonPos);
+        moving = true;
+      }
       if (ceilingLights && !ceilingLights.done()) {
         var lit = ceilingLights.step(dt);
         setCeiling(lit.level);
@@ -1066,6 +1112,19 @@ export function createScene(options) {
     },
     // Puts an 80 x 25 grid on the desk terminal.
     showDesk: showDesk,
+    // The desk terminal's power switch, as its click works it.
+    setDeskPower: setDeskPower,
+    deskPower: function () {
+      return deskOn;
+    },
+    // Where the power switch is on the page, for automated checks; null
+    // before the office is in.
+    buttonToClient: function () {
+      if (!officeButton.length) return null;
+      var rect = canvas.getBoundingClientRect();
+      officeButton[0].getWorldPosition(projected).project(camera);
+      return { x: rect.left + ((projected.x + 1) / 2) * rect.width, y: rect.top + ((1 - projected.y) / 2) * rect.height };
+    },
     // How hard node `number` is working (0..1, or -1 when it is down),
     // which one cabinet's lamps and tape reels follow, and how full its
     // memory is (0..1); each also has a meter in the racks beside the wall.

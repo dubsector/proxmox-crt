@@ -7,7 +7,19 @@
 // What moves or lights up is not in the model: scene.js keeps drawing it
 // live, in front of the baked surfaces, and hides its own plain stand-ins
 // for what the model now draws.
-import { ClampToEdgeWrapping, Color, LinearFilter, MeshBasicMaterial, Quaternion, SRGBColorSpace, Texture, Vector3 } from "three";
+import {
+  Box3,
+  BoxGeometry,
+  ClampToEdgeWrapping,
+  Color,
+  LinearFilter,
+  Mesh,
+  MeshBasicMaterial,
+  Quaternion,
+  SRGBColorSpace,
+  Texture,
+  Vector3,
+} from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 
@@ -27,6 +39,9 @@ var SMALL_DEVICE_MAP_SIZE = 2048;
 var LED_ON = 0xb4d23a;
 var LED_OFF = 0x262b10;
 var EMISSIVE_TOWARD_WHITE = 0.35;
+// The terminal's power switch is small, so the area that takes the click is
+// this many times the size of its cap (as in terminal's model.js).
+var BUTTON_COLLIDER_SCALE = 2.6;
 
 // How far a key goes down, and how fast (see terminal's keys.js).
 var KEY_DOWN_S = 0.03;
@@ -364,11 +379,41 @@ export function buildOffice(loaded, legends) {
   }
 
   // The terminal's own case, for the click that locks the view on it.
-  var terminalCase = ["Collar", "Housing", "Plinth", "SideControls", "Nameplate", "NameplateText", "PowerButton"]
+  var terminalCase = ["Collar", "Housing", "Plinth", "SideControls", "Nameplate", "NameplateText"]
     .map(function (n) {
       return byName[n];
     })
     .filter(Boolean);
+
+  // The terminal's power switch: the modelled push-push cap, and a larger
+  // unseen box just in front of it that takes the click. Pressing moves the
+  // cap into the set along its own axis by the travel the model gives, in
+  // metres, the units of the space its position lives in.
+  var button = byName.PowerButton || null;
+  var buttonRest = button ? button.position.clone() : null;
+  var buttonPush = null;
+  var buttonPicks = [];
+  var colliderGeo = null;
+  if (button) {
+    buttonPush = new Vector3(0, 0, -1).applyQuaternion(button.quaternion).multiplyScalar(button.userData.travel || 0.003);
+    buttonPicks.push(button);
+    button.updateMatrixWorld(true);
+    var box = new Box3().setFromObject(button);
+    var size = box.getSize(new Vector3());
+    // Sized and placed in the button's parent's units, which are metres.
+    var toLocal = 1 / root.scale.x;
+    colliderGeo = new BoxGeometry(size.x * toLocal * BUTTON_COLLIDER_SCALE, size.y * toLocal * BUTTON_COLLIDER_SCALE, size.z * toLocal * 1.5);
+    var collider = new Mesh(colliderGeo, keep(new MeshBasicMaterial()));
+    collider.visible = false;
+    // On the cap's centre, standing a little proud of the case.
+    collider.position.copy(button.parent.worldToLocal(box.getCenter(new Vector3())));
+    collider.position.addScaledVector(buttonPush, -1);
+    collider.quaternion.copy(button.quaternion);
+    button.parent.add(collider);
+    collider.updateMatrixWorld(true);
+    buttonPicks.push(collider);
+  }
+
   var lampParts = ["Lamp_Base", "Lamp_Arm", "Lamp_Shade", "Lamp_ShadeGlow"]
     .map(function (n) {
       return byName[n];
@@ -382,6 +427,12 @@ export function buildOffice(loaded, legends) {
     tubeQuaternion: tubeQuaternion,
     meshes: meshes,
     terminalCase: terminalCase,
+    // What a click on the terminal's power switch can land on.
+    powerButton: buttonPicks,
+    // 0 = out (off), 1 = latched in (on).
+    setButton: function (pressed) {
+      if (button) button.position.copy(buttonRest).addScaledVector(buttonPush, pressed);
+    },
     lampParts: lampParts,
     wallSets: byName.Wall_Sets || null,
     // Light levels: 0..1 for the ceiling lights and the desk lamp; the
