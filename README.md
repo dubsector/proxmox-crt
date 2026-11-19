@@ -199,6 +199,7 @@ the setup card writes and which can as well be written by hand:
 listen = "0.0.0.0:8086"
 password_hash = "$argon2id$..."   # from: proxmox-crt --hash-password
 public_url = "https://crt.example.com"   # where visitors reach the page; leave out on a plain LAN
+trusted_proxies = ["192.168.1.5"]        # your own reverse proxy, as an address or a range (10.0.0.0/24, fd00::/8); leave out with none
 
 [proxmox]
 url = "https://192.168.1.10:8006"
@@ -242,8 +243,35 @@ page opened over plain http at the bridge's own address says to go to the
 public one: a browser does not keep a `Secure` cookie there, so a log-in
 would not hold. (`http://localhost`, as through an ssh tunnel, still
 works.) Wrong passwords, wrong codes and passkeys that do not check out
-are together limited to five a minute for each address, and behind a proxy
-every visitor comes from the proxy's own, so they share that limit.
+are together limited to five a minute for each address.
+
+Behind a proxy every connection comes from the proxy's own address, so all
+visitors would share that limit, and one of them guessing would keep the
+rest out. `trusted_proxies` is for that: list the address of your reverse
+proxy there, or a range such as `10.0.0.0/24`, and a request that comes
+from it is counted under the address the proxy says it was sent from, in
+the `X-Forwarded-For` header. Each proxy adds the address it was reached
+from at the right end of that header, so the bridge reads it from the
+right, passes over the proxies you listed, and takes the first address
+that is not one of them. What stands left of that was sent along by the
+visitor and is not looked at. A request that comes from any other address
+is counted under that address, whatever header it carries, and so is one
+whose header names nothing usable: an entry that is no address ends the
+reading there, though a port after an address is let go. Only
+`X-Forwarded-For` is read, not `Forwarded` and not `X-Real-IP`. Reverse
+proxies write it as a rule; some need to be told to, and one that passes
+a visitor's own header on untouched must not be listed. Without the setting
+the header is never read, and visitors behind a proxy share the proxy's
+limit as before.
+
+List only your own proxy. Whoever can connect from a listed address can
+write any address into the header and is counted under it: with the
+address of a machine you do not control in the list, or a range wider
+than your proxy, its users pick the address they are counted under, a new
+one for every five guesses, and only the limit for all addresses together
+(sixty a minute) still holds them. An entry that is neither an address
+nor a range stops the bridge from starting, and it says which. Like the
+other settings written by hand it is read when the bridge starts.
 
 The bridge writes the file itself when the setup card is filled in, when a
 second factor is set up or removed, and each time a code or a passkey is
@@ -388,5 +416,6 @@ Query parameters:
 | `server/src/second_factor.rs` | The second step of logging in by code, and the routes that set it up and remove it. |
 | `server/src/passkey.rs` | The second step by passkey, and the routes that add and remove passkeys. |
 | `server/src/oidc.rs` | Single sign-on: the trip to the provider and back, and who is let in. |
+| `server/src/visitor.rs` | Whose address a request is counted under behind a reverse proxy: `trusted_proxies` and `X-Forwarded-For`. |
 | `server/examples/mock_pve.rs` | A stand-in Proxmox host for development and tests. |
 | `server/tests/bridge.rs` | The bridge end to end, against the mock. |

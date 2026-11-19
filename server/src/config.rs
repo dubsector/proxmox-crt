@@ -23,6 +23,13 @@ pub struct Config {
     /// cookies are marked to travel over nothing else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+    /// The reverse proxies in front of the bridge, each an address or a
+    /// range such as `10.0.0.0/24`. A connection from one of them is counted
+    /// under the address its `X-Forwarded-For` header gives, so that wrong
+    /// guesses are held against the visitor and not against the proxy.
+    /// Written by hand.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_proxies: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxmox: Option<Proxmox>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -137,6 +144,7 @@ impl Config {
             poll_secs: default_poll(),
             password_hash: None,
             public_url: None,
+            trusted_proxies: Vec::new(),
             proxmox: None,
             oidc: None,
             second_factor: SecondFactor::default(),
@@ -393,6 +401,32 @@ mod tests {
         config.second_factor.totp_secret = Some("GEZDGNBVGY3TQOJQ".into());
         let written = toml::to_string_pretty(&config).unwrap();
         assert_eq!(toml::from_str::<Config>(&written).unwrap(), config);
+    }
+
+    #[test]
+    fn the_proxies_are_written_by_hand_and_kept_as_written() {
+        let config: Config = toml::from_str("listen = \"127.0.0.1:8086\"\n").unwrap();
+        assert!(config.trusted_proxies.is_empty());
+        // Nothing of them is written where there are none.
+        assert!(!toml::to_string_pretty(&config).unwrap().contains("trusted_proxies"));
+
+        let text = "trusted_proxies = [\"192.168.1.5\", \"10.0.0.0/24\", \"fd00::/8\"]\n\n[proxmox]\nurl = \"https://pve.example:8006\"\ntoken_id = \"crt@pve!wall\"\ntoken_secret = \"secret\"\n";
+        let mut config: Config = toml::from_str(text).unwrap();
+        assert_eq!(config.trusted_proxies, ["192.168.1.5", "10.0.0.0/24", "fd00::/8"]);
+        // They survive the bridge writing the file, as when a code is used.
+        config.second_factor.totp_secret = Some("GEZDGNBVGY3TQOJQ".into());
+        let dir = std::env::temp_dir().join(format!("proxmox-crt-config-proxies-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        config.save(&path).unwrap();
+        assert_eq!(Config::load(&path).unwrap(), config);
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.contains("trusted_proxies = ["), "{written}");
+        // They stay above the first section, where they belong.
+        assert!(
+            written.find("trusted_proxies").unwrap() < written.find("[proxmox]").unwrap(),
+            "{written}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -535,6 +535,103 @@ async fn wrong_codes_run_out_as_wrong_passwords_do() {
     assert_eq!(before.recovery.len(), 10);
 }
 
+/// Tries `typed` as the password, as a visitor would whose request a proxy passed on with
+/// `forwarded` as its `X-Forwarded-For` header, and answers the status.
+async fn log_in_through_a_proxy(bridge: &Bridge, forwarded: &str, typed: &str) -> u16 {
+    let response = bridge
+        .http
+        .post(format!("http://{}/api/login", bridge.addr))
+        .header("X-Forwarded-For", forwarded)
+        .json(&json!({ "password": typed }))
+        .send()
+        .await
+        .unwrap();
+    response.status().as_u16()
+}
+
+#[tokio::test]
+async fn behind_a_trusted_proxy_wrong_passwords_count_against_the_visitor() {
+    let mock = mock_pve::start("127.0.0.1:0").await;
+    // The tests' requests come from this machine, which here is the proxy.
+    let bridge = bridge_with("proxy-trusted", Some("trusted_proxies = [\"127.0.0.1\"]\n")).await;
+    let cookie = bridge.set_up(&mock).await;
+    // The setup card wrote the file and left the proxies in it.
+    assert_eq!(config::Config::load(&bridge.config).unwrap().trusted_proxies, ["127.0.0.1"]);
+    bridge.post("/api/logout", json!({}), Some(&cookie)).await;
+
+    for _ in 0..5 {
+        assert_eq!(log_in_through_a_proxy(&bridge, "203.0.113.7", "wrong horse").await, 403);
+    }
+    // That visitor has to wait, whatever it writes into the header itself:
+    // the proxy adds the address it saw at the right.
+    assert_eq!(log_in_through_a_proxy(&bridge, "203.0.113.7", PASSWORD).await, 429);
+    assert_eq!(log_in_through_a_proxy(&bridge, "198.51.100.1, 203.0.113.7", PASSWORD).await, 429);
+    assert_eq!(log_in_through_a_proxy(&bridge, "127.0.0.1, 203.0.113.7", PASSWORD).await, 429);
+    // Another visitor behind the same proxy does not, and neither does the
+    // proxy's own address, which a header with nothing to go by counts under.
+    assert_eq!(log_in_through_a_proxy(&bridge, "203.0.113.8", "wrong horse").await, 403);
+    assert_eq!(log_in_through_a_proxy(&bridge, "203.0.113.8", PASSWORD).await, 200);
+    assert_eq!(log_in_through_a_proxy(&bridge, "203.0.113.7, unknown", PASSWORD).await, 200);
+    assert_eq!(bridge.post("/api/login", json!({ "password": PASSWORD }), None).await.0, 200);
+}
+
+#[tokio::test]
+async fn without_a_trusted_proxy_the_forwarded_header_changes_nothing() {
+    let mock = mock_pve::start("127.0.0.1:0").await;
+    // A proxy is named, but it is not where the requests come from.
+    for (name, settings) in [
+        ("proxy-none", None),
+        ("proxy-elsewhere", Some("trusted_proxies = [\"192.168.1.5\", \"10.0.0.0/24\"]\n")),
+    ] {
+        let bridge = bridge_with(name, settings).await;
+        let cookie = bridge.set_up(&mock).await;
+        bridge.post("/api/logout", json!({}), Some(&cookie)).await;
+        // Each try names another address, and all count as the one they
+        // really come from.
+        for last in 1..=5 {
+            let forwarded = format!("203.0.113.{last}");
+            assert_eq!(log_in_through_a_proxy(&bridge, &forwarded, "wrong horse").await, 403);
+        }
+        assert_eq!(log_in_through_a_proxy(&bridge, "203.0.113.99", PASSWORD).await, 429, "{name}");
+        assert_eq!(
+            bridge.post("/api/login", json!({ "password": PASSWORD }), None).await.0,
+            429,
+            "{name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_proxy_that_is_no_address_stops_the_bridge_from_starting() {
+    let dir = std::env::temp_dir().join(format!("proxmox-crt-test-{}-proxy-misspelt", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config.toml");
+    for (settings, entry) in [
+        ("trusted_proxies = [\"192.168.1.5\", \"10.0.0.0/33\"]\n", "\"10.0.0.0/33\""),
+        ("trusted_proxies = [\"myproxy\"]\n", "\"myproxy\""),
+    ] {
+        std::fs::write(&path, settings).unwrap();
+        let options = Options {
+            config: path.clone(),
+            client: PathBuf::new(),
+        };
+        let refused = App::new(&options).err().expect("the bridge does not start").to_string();
+        assert!(refused.contains("trusted_proxies") && refused.contains(entry), "{refused}");
+    }
+    // The bridge itself says so and stops.
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_proxmox-crt"))
+        .arg("--config")
+        .arg(&path)
+        .arg("--listen")
+        .arg("127.0.0.1:0")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(said.contains("trusted_proxies: \"myproxy\" is not an address"), "{said}");
+}
+
 /// A browser on this machine that comes from another of its addresses.
 #[cfg(target_os = "linux")]
 fn from_address(last: u8) -> reqwest::Client {

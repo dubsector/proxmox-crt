@@ -15,6 +15,7 @@ mod passkey;
 pub mod pve;
 mod second_factor;
 pub mod totp;
+mod visitor;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, Path as UrlPath, Query, State};
@@ -56,6 +57,8 @@ pub struct App {
     passkeys: passkey::Ceremonies,
     /// Sign-ins that are away at the single sign-on provider.
     oidc: oidc::SignIns,
+    /// The reverse proxies whose word is taken for where a visitor is.
+    proxies: visitor::Trusted,
     /// Checking a password takes a while and some memory on purpose, so
     /// only this many are checked at a time and the rest wait their turn.
     hashing: Semaphore,
@@ -93,6 +96,8 @@ impl App {
             ));
         }
         let oidc = oidc::SignIns::new(&config).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let proxies =
+            visitor::Trusted::new(&config.trusted_proxies).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         let code = totp::random_plain(8);
         Ok(Arc::new(App {
             config_path: options.config.clone(),
@@ -102,6 +107,7 @@ impl App {
             enrolling: Mutex::new(HashMap::new()),
             passkeys: passkey::Ceremonies::default(),
             oidc,
+            proxies,
             hashing: Semaphore::new(2),
             setup_code: format!("{}-{}", &code[..4], &code[4..]),
             feed: watch::channel(Arc::from("")).0,
@@ -210,6 +216,12 @@ impl App {
             Err(e) => eprintln!("settings: could not read {}: {e}", self.config_path.display()),
         }
         config.second_factor.clone()
+    }
+
+    /// The address a request's guesses are counted under. Everything that
+    /// counts guesses asks here; the rule is at `visitor::Trusted::visitor`.
+    fn visitor(&self, peer: IpAddr, headers: &HeaderMap) -> IpAddr {
+        self.proxies.visitor(peer, headers)
     }
 
     /// Checks the password, counting the guess against `from` before it is
@@ -428,7 +440,8 @@ async fn setup(
             "This bridge is already set up. To start over, delete its settings file and restart it.",
         );
     }
-    if !app.sessions.may_guess(from.ip()) {
+    let from = app.visitor(from.ip(), &headers);
+    if !app.sessions.may_guess(from) {
         return refuse(StatusCode::TOO_MANY_REQUESTS, "Too many wrong tries. Wait a minute.");
     }
     let typed: String = form.code.trim().to_ascii_uppercase();
@@ -438,7 +451,7 @@ async fn setup(
             "That is not the setup code. It is in the bridge's log: journalctl -u proxmox-crt",
         );
     }
-    app.sessions.guessed_right(from.ip());
+    app.sessions.guessed_right(from);
     if form.password.chars().count() < auth::MIN_PASSWORD {
         return refuse(
             StatusCode::BAD_REQUEST,
@@ -542,7 +555,7 @@ async fn login(
             "Logging in by password is turned off here. Use single sign-on.",
         );
     }
-    if let Err(no) = app.check_password(from.ip(), form.password).await {
+    if let Err(no) = app.check_password(app.visitor(from.ip(), &headers), form.password).await {
         return no;
     }
     let factor = app.second_factor();
