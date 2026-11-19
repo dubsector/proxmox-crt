@@ -334,6 +334,7 @@ pub fn router(app: Arc<App>, client_dir: PathBuf) -> Router {
         .route("/api/second-factor/passkey/start", post(passkey::add_start))
         .route("/api/second-factor/passkey/finish", post(passkey::add_finish))
         .route("/api/second-factor/passkey/{id}", delete(passkey::remove))
+        .route("/api/password", post(change_password))
         .route("/api/logout", post(logout))
         .route("/api/feed", get(feed))
         .route("/api/console/{vmid}", get(console))
@@ -577,6 +578,55 @@ async fn login(
         })),
     )
         .into_response()
+}
+
+#[derive(Deserialize)]
+struct NewPassword {
+    password: String,
+    new_password: String,
+}
+
+/// Changes the password, for someone logged in who gives the old one too.
+/// Every other session is closed: whoever opened them with the old
+/// password has to give the new one. This one stays open.
+async fn change_password(
+    State(app): State<Arc<App>>,
+    ConnectInfo(from): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(form): Json<NewPassword>,
+) -> Response {
+    if let Err(no) = admit(&app, &headers) {
+        return no;
+    }
+    let Some(session) = app.session(&headers) else {
+        return refuse(StatusCode::UNAUTHORIZED, "Log in first.");
+    };
+    if form.new_password.chars().count() < auth::MIN_PASSWORD {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            format!("The new password needs at least {} characters.", auth::MIN_PASSWORD),
+        );
+    }
+    if let Err(no) = app.check_password(app.visitor(from.ip(), &headers), form.password).await {
+        return no;
+    }
+    let password = form.new_password;
+    let hash = {
+        let _turn = app.hashing.acquire().await;
+        match tokio::task::spawn_blocking(move || auth::hash_password(&password)).await {
+            Ok(Ok(hash)) => hash,
+            _ => return refuse(StatusCode::INTERNAL_SERVER_ERROR, "Could not hash the password."),
+        }
+    };
+    let saved = app.change(|config| {
+        config.password_hash = Some(hash);
+        Ok(())
+    });
+    if let Err(no) = saved {
+        return no;
+    }
+    app.sessions.close_others(&session);
+    (StatusCode::OK, [(CACHE_CONTROL, "no-store")], Json(json!({ "ok": true }))).into_response()
 }
 
 async fn logout(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {

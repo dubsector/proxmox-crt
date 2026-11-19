@@ -1,7 +1,7 @@
 // The sign-in settings: a card, in the look of the gate's, where the owner
 // sets up or removes what is asked for after the password (an authenticator
-// app, passkeys), makes new recovery codes, sees whether single sign-on is
-// on, and logs out. A quiet button in the corner of the page opens it.
+// app, passkeys), makes new recovery codes, changes the password, sees
+// whether single sign-on is on, and logs out. A quiet button in the corner of the page opens it.
 import { ask } from "./bridge.js";
 import { passkeysWork, makePasskey, passkeyTrouble, NO_PASSKEYS } from "./passkey.js";
 import { el, field, link, showCard, raise, lower } from "./gate.js";
@@ -124,11 +124,36 @@ export function createSecurity(options) {
           rows.push(el("p", { text: "Single sign-on: off. Turn it on in the bridge's settings file." + (r.body.oidc_possible ? "" : " It needs public_url there too.") }));
         }
       }
+      rows.push(action("Change password", changePassword));
       rows.push(action("Log out", logout));
       showCard(host, "SIGN-IN SETTINGS", "How you sign in to this page.", rows, "Close", function () {
         lower();
       });
     });
+  }
+
+  // The old password, then the new one twice. Every other session is
+  // closed by the bridge; this one stays open.
+  function changePassword() {
+    var password = field("Current password", "password", { type: "password", autocomplete: "current-password" });
+    var next = field("New password", "new_password", { type: "password", autocomplete: "new-password", minlength: "8" }, "At least 8 characters.");
+    var again = field("Confirm new password", "again", { type: "password", autocomplete: "new-password" });
+    showCard(
+      host,
+      "CHANGE PASSWORD",
+      "Anywhere else signed in to this page will be signed out.",
+      [password.row, next.row, again.row],
+      "Change password",
+      function (fail) {
+        if (next.input.value !== again.input.value) return fail("The new passwords do not match.");
+        ask("password", { password: password.input.value, new_password: next.input.value }).then(function (r) {
+          if (!host) return;
+          if (r.ok) showCard(host, "PASSWORD CHANGED", "Your new password is saved. Anywhere else signed in has been signed out.", [], "Done", home);
+          else fail(r.body.error || "Something went wrong. Try again.");
+        });
+      },
+      [link("Back", home)]
+    );
   }
 
   function logout() {

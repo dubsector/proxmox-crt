@@ -899,6 +899,56 @@ async fn a_file_that_root_replaced_can_still_be_written_by_the_bridge() {
 }
 
 #[tokio::test]
+async fn the_password_is_changed_with_the_old_one_and_closes_the_other_sessions() {
+    let mock = mock_pve::start("127.0.0.1:0").await;
+    let bridge = bridge("password-change").await;
+    let cookie = bridge.set_up(&mock).await;
+    let (_, _, other) = bridge.post("/api/login", json!({ "password": PASSWORD }), None).await;
+    let other = other.unwrap();
+    let change = "/api/password";
+    let new = "correct battery staple";
+
+    assert_eq!(
+        bridge
+            .post(change, json!({ "password": PASSWORD, "new_password": new }), None)
+            .await
+            .0,
+        401
+    );
+    assert_eq!(
+        bridge
+            .post(change, json!({ "password": "wrong horse", "new_password": new }), Some(&cookie))
+            .await
+            .0,
+        403
+    );
+    assert_eq!(
+        bridge
+            .post(change, json!({ "password": PASSWORD, "new_password": "short" }), Some(&cookie))
+            .await
+            .0,
+        400
+    );
+    assert!(auth_hash_matches(
+        config::Config::load(&bridge.config).unwrap().password_hash.as_deref().unwrap()
+    ));
+
+    let (status, body, _) = bridge
+        .post(change, json!({ "password": PASSWORD, "new_password": new }), Some(&cookie))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let saved = config::Config::load(&bridge.config).unwrap().password_hash.unwrap();
+    assert!(proxmox_crt::auth::verify_password(new, &saved));
+    assert_eq!(bridge.state(Some(&cookie)).await["authed"], true);
+    assert_eq!(bridge.state(Some(&other)).await["authed"], false);
+
+    assert_eq!(bridge.post("/api/login", json!({ "password": PASSWORD }), None).await.0, 403);
+    let (status, _, session) = bridge.post("/api/login", json!({ "password": new }), None).await;
+    assert_eq!(status, 200);
+    assert_eq!(bridge.state(session.as_deref()).await["authed"], true);
+}
+
+#[tokio::test]
 async fn changing_the_second_factor_takes_the_password_again() {
     let mock = mock_pve::start("127.0.0.1:0").await;
     let bridge = bridge("factor-change").await;
