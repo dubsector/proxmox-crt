@@ -7,7 +7,7 @@
 
 // How bright the tubes are once warm, as a share of the bake. The bake is
 // lit for a bright office; a firing room at night runs much darker.
-export var CEILING_FULL = 0.38;
+export var CEILING_FULL = 0.25;
 // What is left of the room's baked light with the tubes off: the spill of
 // the signs and gear that the bake folded into the room pass.
 export var CEILING_DARK = 0.03;
