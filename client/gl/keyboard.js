@@ -187,8 +187,25 @@ export function createKeyboard(options) {
     owned.push(legendGeometry, legendMaterial, legends);
   }
 
+  var held = {};
   return {
     group: group,
+    // What a click can land on, and the code of the key it landed on.
+    pickables: [caps],
+    codeAt: function (hit) {
+      if (hit.object !== caps || hit.instanceId === undefined) return undefined;
+      return keys[hit.instanceId].code;
+    },
+    // A key held down, or let go. True if the keyboard has that key.
+    hold: function (code, down) {
+      if (STAND_INS[code]) code = STAND_INS[code];
+      var i = byCode[code];
+      if (i === undefined) return false;
+      held[i] = !!down;
+      glow[i] = 1;
+      // Let go, it rises as a struck key does.
+      return true;
+    },
     // Shows a key going down. True if the keyboard has that key.
     press: function (code) {
       if (STAND_INS[code]) code = STAND_INS[code];
@@ -201,8 +218,10 @@ export function createKeyboard(options) {
     update: function (dt) {
       var moving = false;
       for (var i = 0; i < keys.length; i++) {
-        if (glow[i] <= 0) continue;
-        glow[i] = Math.max(0, glow[i] - dt / KEY_FLASH_S);
+        // A held key stays down and lit, and needs no more frames.
+        if (glow[i] <= 0 || held[i] === "placed") continue;
+        if (held[i]) held[i] = "placed";
+        else glow[i] = Math.max(0, glow[i] - dt / KEY_FLASH_S);
         place(i);
         moving = true;
       }
