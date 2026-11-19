@@ -272,7 +272,7 @@ export function createScene(options) {
   scene.add(controls.group);
 
   // Somebody's lava lamp, on the other side of the terminal from the box.
-  var lavaLamp = createLavaLamp({ x: L.lavaLamp.x, y: DESK_Y, z: L.lavaLamp.z, still: reduced });
+  var lavaLamp = createLavaLamp({ x: L.lavaLamp.x, y: DESK_Y, z: L.lavaLamp.z, back: L.desk.back, still: reduced });
   scene.add(lavaLamp.group);
 
   // What a shift leaves lying about, on the bare ends of the desk.
@@ -328,6 +328,7 @@ export function createScene(options) {
   var LIVE_CEILING = 0.55;
   function setCeiling(level) {
     office.setRoom(level);
+    lavaLamp.setRoom(level);
     ambient.intensity = LIVE_AMBIENT * level;
     ceiling.intensity = LIVE_CEILING * level;
   }
@@ -350,6 +351,9 @@ export function createScene(options) {
     hide.forEach(function (m) {
       m.visible = false;
     });
+    // The lava lamp draws its own metal, which a light map cannot show.
+    var lavaMetal = office.root.getObjectByName("Lava_Metal");
+    if (lavaMetal) lavaMetal.visible = false;
     for (var i = 0; i < wallCount; i++) bank.hideCabinet(i);
     // The terminal leans back, as the real one does.
     tube.mesh.quaternion.copy(office.tubeQuaternion);
@@ -358,6 +362,7 @@ export function createScene(options) {
     // The room starts dark and its ceiling lights flicker on (gl/ceiling.js).
     // The plain room's own lights now only light the live parts, and follow
     // the ceiling so those sit in the same light as the baked room.
+    lavaLamp.useBaked();
     ceilingLights = createCeiling(reduced);
     setCeiling(roomLevel(0));
     // What a click can land on: the model's terminal and wall of sets, in
@@ -1080,6 +1085,7 @@ export function createScene(options) {
       office.setScreenLight(screenTint.copy(phosphor).multiplyScalar(GLASS_T * EMISSION_GAIN * screenLevel * SCREEN_GLOW_GAIN));
       office.setWallLight(wallTint.copy(phosphor).multiplyScalar(GLASS_T * EMISSION_GAIN * bank.light()));
       office.setLamp(props.lampLevel());
+      lavaLamp.setScreenLight(screenTint);
     }
 
     if (moving) wake(0.1);
