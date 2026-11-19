@@ -37,10 +37,15 @@ The memory is for the Rust build. Once installed, the container can be given
 less; an update needs the 2048 MB back.
 
 They are written for [community-scripts](https://github.com/community-scripts/ProxmoxVE)
-and use its engine, so they do not run on their own. New scripts go to
-[DevScripts](https://github.com/community-scripts/DevScripts) first, which is
-why line 2 of the `ct/` script points there. To try them from a checkout of
-this repository on a Proxmox host (not yet tried, see below):
+and use its engine, so they do not run on their own. Line 2 of the `ct/`
+script says where the scripts live, which for now is this repository. On a
+Proxmox host:
+
+```sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/dubsector/proxmox-crt/main/ct/proxmox-crt.sh)"
+```
+
+Or from a checkout, where the engine finds `install/` beside `ct/`:
 
 ```sh
 git clone https://github.com/dubsector/proxmox-crt
@@ -48,18 +53,24 @@ cd proxmox-crt
 bash ct/proxmox-crt.sh
 ```
 
-The engine looks for `install/` beside `ct/` in the checkout. Without a
-checkout, `COMMUNITY_SCRIPTS_URL` has to name where the scripts are:
+New scripts go to [DevScripts](https://github.com/community-scripts/DevScripts)
+first. When these are sent there, line 2 has to name that repository instead.
+
+To update, run `update` in the container (`pct enter <id>` on the Proxmox
+host). It compares the installed commit, kept in `/root/.proxmox-crt`, with
+the default branch; if they differ it rebuilds, replaces the bridge, the
+page and the unit, and restarts the service. The settings are left alone.
+
+A container made before line 2 named this repository looks for the scripts
+elsewhere, and its `update` says `No update script found for 'proxmox-crt'`.
+Run the script from here once, inside the container, and choose to update:
 
 ```sh
-export COMMUNITY_SCRIPTS_URL=https://raw.githubusercontent.com/dubsector/proxmox-crt/main
-bash -c "$(curl -fsSL "$COMMUNITY_SCRIPTS_URL/ct/proxmox-crt.sh")"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/dubsector/proxmox-crt/main/ct/proxmox-crt.sh)"
 ```
 
-To update, run `update` in the container (or the `ct/` script again from
-inside it). It compares the installed commit, kept in `/root/.proxmox-crt`,
-with the default branch; if they differ it rebuilds, replaces the bridge, the
-page and the unit, and restarts the service. The settings are left alone.
+That run also sets the container's `update` command right, so it works by
+itself from then on.
 
 ## By hand on Debian
 
@@ -112,17 +123,9 @@ To serve on another address, set `listen` in the settings file, or add
 
 ## Not tested yet
 
-None of this has run on a Proxmox host or in a Debian 13 container. Checked so
-far: `bash -n` on both scripts, and `systemd-analyze verify` on the unit
-(systemd 255), which found nothing but the missing binary.
+The install has run from a checkout on a Proxmox VE 9.2 host, into a Debian
+13 container, through to the setup card and a console. The rest has not:
 
-Before relying on it, or sending it to community-scripts:
-
-- **The default branch has to hold the bridge.** The scripts build `main`.
-  At the time of writing `main` had no `server/` and none of these files, so
-  the build fails until they are merged.
-- **A full run:** create the container, reach the page on 8086, read the setup
-  code, finish the setup card, open a console.
 - **The update:** change `main`, run `update`, see the new build serving and
   the settings kept.
 - **The hardening in an unprivileged container.** `ProtectSystem=strict`,
