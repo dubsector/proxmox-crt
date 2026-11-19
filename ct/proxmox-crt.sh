@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-_CS_DEFAULT_URL="https://raw.githubusercontent.com/community-scripts/DevScripts/main"
+_CS_DEFAULT_URL="https://raw.githubusercontent.com/dubsector/proxmox-crt/main"
 _cs_boot="${COMMUNITY_SCRIPTS_CORE_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../core}/core/build.func"
 source "$_cs_boot" 2>/dev/null || source <(curl -fsSL "${COMMUNITY_SCRIPTS_CORE_URL:-https://raw.githubusercontent.com/community-scripts/core/main}/core/build.func")
 
@@ -26,13 +26,22 @@ catch_errors
 
 function update_script() {
   header_info
-  check_container_storage
-  check_container_resources
 
   if [[ ! -f /opt/proxmox-crt/proxmox-crt ]]; then
     msg_error "No ${APP} Installation Found!"
     exit
   fi
+
+  # The container's `update` command remembers where the scripts were when it
+  # was made. One made while they were looked for elsewhere finds nothing
+  # there, so have it look where this run came from. Before the
+  # checks below, any of which can end the run.
+  if declare -f write_update_entrypoint >/dev/null; then
+    write_update_entrypoint "${NSAPP:-proxmox-crt}" "proxmox-crt" "${COMMUNITY_SCRIPTS_URL:-$_CS_DEFAULT_URL}" 2>/dev/null || msg_warn "Could not point the update command at ${COMMUNITY_SCRIPTS_URL:-$_CS_DEFAULT_URL}"
+  fi
+
+  check_container_storage
+  check_container_resources
 
   if check_for_gh_branch "proxmox-crt" "dubsector/proxmox-crt"; then
     ensure_dependencies build-essential
