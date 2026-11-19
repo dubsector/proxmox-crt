@@ -81,6 +81,11 @@ terminal is a real terminal on whichever guest is selected. What works:
   click on the terminal's case brings the view in close to the terminal's
   screen and holds it still; the same again lets go, and so does a right
   click.
+- Power: the push button under the desk terminal's screen switches the
+  terminal off and on, as a real monitor's does: the picture folds to a line
+  and a fading dot, and comes back after the tube warms up. The green lamp
+  beside it shows when it is on. Only the picture goes; the console behind
+  it keeps running and keeps taking keys.
 - Switching: type a monitor number on the numpad (two digits select at once,
   one digit after a pause or Enter), `+` and `-` for next and previous, or
   click a wall monitor. The numpad always belongs to the switcher; every
