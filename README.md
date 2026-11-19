@@ -118,6 +118,8 @@ guest's terminal. The token never reaches a browser.
 
 - **Password.** The bridge can open consoles, so the page asks for a
   password. It is stored as an Argon2 hash, and a session is a cookie.
+  "Change password" in the sign-in settings takes the current password and
+  a new one, and signs out every other session.
 - **Second step.** With an authenticator app set up, the right password
   opens nothing by itself: it earns five minutes in which to give the app's
   code (RFC 6238: SHA-1, six digits, a new one every 30 seconds, which every

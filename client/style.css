@@ -288,8 +288,8 @@ body {
   color: #ffb000 !important;
 }
 
-/* The way in to the sign-in settings: there for whoever looks for it, and
-   out of the picture otherwise. It sits over the readout, clear of the
+/* The way in to the sign-in settings: plain to see, but no brighter than
+   the readout around it. It sits over the readout, clear of the
    desk's controls and of the touch keypad on the other side. */
 #security {
   position: fixed;
@@ -301,9 +301,9 @@ body {
   letter-spacing: 0.04em;
   color: #9fb0a4;
   background: rgba(8, 10, 9, 0.82);
-  border: 1px solid rgba(159, 176, 164, 0.3);
+  border: 1px solid rgba(159, 176, 164, 0.6);
   border-radius: 3px;
-  opacity: 0.3;
+  opacity: 0.85;
   cursor: pointer;
   transition: opacity 0.15s;
 }
