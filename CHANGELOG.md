@@ -3,7 +3,9 @@
 What changed in each release, newest first. Containers take a release with
 `update`.
 
-## Unreleased
+## 0.5.0 (2026-11-20)
+
+The desk gear is modelled and baked with the office.
 
 - A scope's trace is drawn by a beam that crosses the screen and fades
   behind it, in place of a shimmer. Traffic rates are measured between
