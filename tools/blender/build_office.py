@@ -62,7 +62,7 @@ B.PASSES = PASSES
 B.RANGE_SKIP = ("Lamp_Shade",)
 B.WARPS = {}
 # Samples per texel at 2048 (fewer at larger sizes: see terminal's README).
-SAMPLES_2048 = {"hero": 1024, "desk": 1024, "room": 768}
+SAMPLES_2048 = {"hero": 1024, "desk": 2048, "room": 768}
 PASS_SAMPLES = {"room": 0.5, "lamp": 1.0, "screen": 0.5, "wall": 0.5}
 B.DENSITY = (
     ("NameplateText", 2.0), ("Nameplate", 2.0), ("Collar", 1.2), ("PowerButton", 1.2),
@@ -78,8 +78,8 @@ B.SMOOTH = (
     ("Key_", 1.0), ("Collar", 1.0), ("Keyboard", 1.0), ("Housing", 1.0), ("Plinth", 1.0),
     ("SideControls", 1.0), ("PowerButton", 1.0),
     ("Room_", 3.0), ("Wall_Rack", 2.0), ("Machine_", 1.5), ("Rack_", 1.5), ("Board_", 1.5), ("Wall_Sets", 1.0),
-    ("Desk_Body", 1.5), ("Lamp_", 1.0), ("Node_", 1.0), ("Pad_", 1.0), ("Switcher_", 1.0), ("Keypad_Case", 1.0),
-    ("Dial_", 1.0),
+    ("Desk_Body", 1.5), ("Lamp_", 1.0), ("Node_", 1.0), ("Pad_", 2.0), ("Switcher_", 1.0), ("Keypad_Case", 2.0),
+    ("Dial_", 2.0),
 )
 B.SMOOTH_REST = 0.5
 
@@ -116,6 +116,9 @@ def views():
 # Kept whole (never trimmed): small moving or recoloured parts.
 KEEP_ALL = ("PowerButton", "PowerLED", "Nameplate", "Kbd_LED_", "Node_Set_", "Pad_", "Dial_Knob", "Switcher_Guard",
             "Switcher_Lever")
+# The page lifts the power switch's guard, so it hides nothing from the trim
+# and casts no shadow on its own atlas; it is baked apart, after the rest.
+GUARD = "Switcher_Guard"
 
 
 def look_material(name, maps):
@@ -254,7 +257,7 @@ def main():
                 and o not in glows and o is not bulb]
     button = T["PowerButton"]
     keyset = set(K["keys"])
-    occluders = [o for o in all_mesh if o is not button] + [wall_glass, glass]
+    occluders = [o for o in all_mesh if o is not button and o.name != GUARD] + [wall_glass, glass]
     world_all = B.World(occluders)
     world_nokeys = B.World([o for o in occluders if o not in keyset])
     eyes = viewpoints()
@@ -355,10 +358,14 @@ def main():
             "wall": [],
         }
         switchable = L["troffers"] + glows + [L["lamp_light"], bulb]
-        stand_ins, spare_mats = {}, []
+        stand_ins, guards, spare_mats = {}, {}, []
         for name in todo:
-            stand_ins[name], mats = B.joined_copy(atlases[name], col, "Bake_" + name)
+            lone = [o for o in atlases[name] if o.name == GUARD]
+            stand_ins[name], mats = B.joined_copy([o for o in atlases[name] if o not in lone], col, "Bake_" + name)
             spare_mats += mats
+            if lone:
+                guards[name], mats = B.joined_copy(lone, col, "Bake_guard")
+                spare_mats += mats
             for o in atlases[name]:
                 o.hide_render = True
         for layer in layers:
@@ -373,16 +380,25 @@ def main():
                 img = bpy.data.images.new("bake_%s_%s" % (name, layer), size, size, alpha=True, float_buffer=True)
                 spp = B.COLOR_SAMPLES if layer == "color" else pass_samples[name][layer]
                 scene.cycles.samples = spp
-                B.bake_into(scene, [stand_ins[name]], img, ("COLOR",) if layer == "color" else ("DIRECT", "INDIRECT"))
+                kind = ("COLOR",) if layer == "color" else ("DIRECT", "INDIRECT")
+                for g in guards.values():
+                    g.hide_render = name in guards
+                B.bake_into(scene, [stand_ins[name]], img, kind)
                 arr = B.image_array(img)
+                if name in guards:
+                    guards[name].hide_render = False
+                    B.bake_into(scene, [guards[name]], img, kind)
+                    own = B.image_array(img)
+                    arr[own[..., 3] > 0] = own[own[..., 3] > 0]
                 take(name, layer, arr)
                 B.save_exr(arr, master(name, layer))
                 bpy.data.images.remove(img)
                 log("BAKE %s/%s: %d objects, %d spp, %d px, %.0f s" % (name, layer, len(atlases[name]), spp, size, time.time() - t0))
-        for name in todo:
-            me = stand_ins[name].data
-            bpy.data.objects.remove(stand_ins[name])
+        for proxy in list(stand_ins.values()) + list(guards.values()):
+            me = proxy.data
+            bpy.data.objects.remove(proxy)
             bpy.data.meshes.remove(me)
+        for name in todo:
             for o in atlases[name]:
                 o.hide_render = False
         for m in spare_mats:

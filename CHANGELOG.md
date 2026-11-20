@@ -20,6 +20,9 @@ What changed in each release, newest first. Containers take a release with
 - The LOCK ON TARGET button is gone from the desk. A click on the
   terminal's case, Scroll Lock or numpad `/` still holds the view on the
   terminal.
+- The keypad's keys are evenly lit, without the dark streaks the bake left
+  on them, and the power switch under the switcher's guard is there to see
+  when the guard is lifted.
 
 ## 0.4.0 (2026-11-20)
 
