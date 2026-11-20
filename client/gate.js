@@ -96,7 +96,7 @@ export function showCard(host, title, intro, rows, button, submit, after) {
 
 var TOKEN_HELP =
   "pveum user add crt@pve\n" +
-  'pveum role add CRTWall --privs "VM.Audit VM.Console VM.PowerMgmt Sys.Audit"\n' +
+  'pveum role add CRTWall --privs "VM.Audit VM.Console VM.PowerMgmt Sys.Audit Datastore.Audit"\n' +
   "pveum acl modify / --users crt@pve --roles CRTWall\n" +
   "pveum user token add crt@pve wall --privsep 0";
 

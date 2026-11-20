@@ -216,14 +216,13 @@ export function createScene(options) {
   scene.add(machines.group);
 
   // Either side of the wall stands a rack of firing-room gear: a clock, a
-  // board of status lamps, meters and a scope. The left one's meters are
-  // the nodes' processors and the right one's their memory. Another stands
-  // in each corner.
+  // board of status lamps, meters and a scope. Another stands in each
+  // corner. What each shows of the cluster is telemetry.js's to say.
   var panels = createPanels({ racks: L.racks, still: reduced });
   scene.add(panels.group);
 
-  // Between them, over the further cabinets, are the big boards: a
-  // tracking chart to the left and the nodes' load to the right. A row of
+  // Between them, over the further cabinets, are the big boards: how the
+  // cluster stands to the left and the nodes' load to the right. A row of
   // lit signs runs along the top of everything.
   var boards = createBoards({
     track: L.boards.track,
@@ -1132,13 +1131,34 @@ export function createScene(options) {
       return { x: rect.left + ((projected.x + 1) / 2) * rect.width, y: rect.top + ((1 - projected.y) / 2) * rect.height };
     },
     // How hard node `number` is working (0..1, or -1 when it is down),
-    // which one cabinet's lamps and tape reels follow, and how full its
-    // memory is (0..1); each also has a meter in the racks beside the wall.
-    setNodeLoad: function (number, load, memory) {
-      machines.setLoad(number - 1, load);
-      panels.setMeter(0, number - 1, Math.max(0, load));
+    // for the pen that plots it on the nodes' board.
+    setNodeLoad: function (number, load) {
       boards.setLoad(number - 1, load);
-      panels.setMeter(1, number - 1, memory === undefined ? null : memory);
+    },
+    // What the room's gear has room for, which telemetry.js is told.
+    gear: { lamps: panels.lampsPer, lampCols: panels.lampCols, machines: machines.count, history: panels.scopePoints },
+    // What the gear shows of the cluster: telemetry.js's reading. The
+    // racks are the four on the back wall (beside the monitors, then the
+    // corners), then the side walls', left wall first.
+    setRoom: function (room) {
+      var all = [panels, panels, panels, panels];
+      var index = [0, 1, 2, 3];
+      sideRacks.forEach(function (along) {
+        for (var k = 0; k < SIDE_RACKS; k++) {
+          all.push(along);
+          index.push(k);
+        }
+      });
+      room.racks.forEach(function (reading, i) {
+        if (all[i]) all[i].set(index[i], reading);
+      });
+      room.machines.forEach(function (load, i) {
+        machines.setLoad(i, load);
+      });
+      boards.setSigns(room.signs);
+      boards.setStatus(room.board);
+      boards.setNames(room.nodeNames);
+      wake(0.5);
     },
     deskCellAt: deskCellAt,
     controlAt: controlAt,

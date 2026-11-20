@@ -306,29 +306,45 @@ impl Client {
         Ok(data.get("version").and_then(Value::as_str).unwrap_or("?").to_string())
     }
 
-    /// Every node and guest the token may see, in the shape the page draws.
+    /// Every node, guest and storage the token may see, in the shape the
+    /// page draws, with what the room's gear shows besides: the cluster's
+    /// quorum and its latest tasks.
     pub async fn read(&self) -> Result<Reading> {
         let data = self.get("/cluster/resources", "reading the cluster").await?;
         let rows = data.as_array().cloned().unwrap_or_default();
+
+        // The load average, I/O wait and swap are not in the cluster
+        // listing. Without Sys.Audit on a node they stay unknown, as do the
+        // tasks and the quorum; none of that stops a reading.
+        let online: Vec<String> = rows
+            .iter()
+            .filter(|row| text(row, "type") == "node" && text(row, "status") == "online")
+            .map(|row| text(row, "node"))
+            .collect();
+        let details = futures_util::future::join_all(
+            online
+                .iter()
+                .map(|name| async move { self.get(&format!("/nodes/{name}/status"), "reading a node").await.ok() }),
+        );
+        let (details, tasks, status) = tokio::join!(
+            details,
+            self.get("/cluster/tasks", "reading the tasks"),
+            self.get("/cluster/status", "reading the quorum")
+        );
+
         let mut nodes = Vec::new();
         let mut guests = Vec::new();
+        let mut storage: Vec<Value> = Vec::new();
         let mut refs = Vec::new();
         for row in &rows {
             match text(row, "type").as_str() {
                 "node" => {
                     let name = text(row, "node");
-                    let online = text(row, "status") == "online";
-                    // The load average is not in the cluster listing. Without
-                    // Sys.Audit on the node it stays unknown.
-                    let load = if online {
-                        self.get(&format!("/nodes/{name}/status"), "reading a node")
-                            .await
-                            .ok()
-                            .and_then(|s| s.get("loadavg").cloned())
-                            .and_then(|l| l.as_array().map(|a| a.iter().map(number).collect::<Vec<f64>>()))
-                    } else {
-                        None
-                    };
+                    let detail = online.iter().position(|n| *n == name).and_then(|at| details[at].as_ref());
+                    let load = detail
+                        .and_then(|s| s.get("loadavg"))
+                        .and_then(|l| l.as_array().map(|a| a.iter().map(number).collect::<Vec<f64>>()));
+                    let part = |of: &str, key: &str| detail.and_then(|s| s.get(of)).and_then(|o| o.get(key)).map(number);
                     nodes.push(serde_json::json!({
                         "node": name,
                         "status": text(row, "status"),
@@ -340,6 +356,10 @@ impl Client {
                         "maxdisk": field(row, "maxdisk"),
                         "uptime": field(row, "uptime"),
                         "loadavg": load,
+                        "wait": detail.and_then(|s| s.get("wait")).map(number),
+                        "swap": part("swap", "used"),
+                        "maxswap": part("swap", "total"),
+                        "version": detail.and_then(|s| s.get("pveversion")).and_then(Value::as_str).map(pve_version),
                     }));
                 }
                 kind @ ("lxc" | "qemu") => {
@@ -366,6 +386,8 @@ impl Client {
                         "maxdisk": field(row, "maxdisk"),
                         "netin": field(row, "netin"),
                         "netout": field(row, "netout"),
+                        "diskread": field(row, "diskread"),
+                        "diskwrite": field(row, "diskwrite"),
                         "uptime": field(row, "uptime"),
                         "tags": text(row, "tags"),
                     }));
@@ -375,16 +397,47 @@ impl Client {
                         kind: kind.to_string(),
                     });
                 }
+                "storage" => {
+                    // Shared storage is listed once for every node; it is
+                    // one storage.
+                    let shared = field(row, "shared") != 0.0;
+                    let name = text(row, "storage");
+                    if shared && storage.iter().any(|s| s["shared"] == true && s["storage"] == name.as_str()) {
+                        continue;
+                    }
+                    storage.push(serde_json::json!({
+                        "storage": name,
+                        "node": if shared { String::new() } else { text(row, "node") },
+                        "shared": shared,
+                        "kind": text(row, "plugintype"),
+                        "status": text(row, "status"),
+                        "disk": field(row, "disk"),
+                        "maxdisk": field(row, "maxdisk"),
+                    }));
+                }
                 _ => {}
             }
         }
         nodes.sort_by_key(|n| n["node"].as_str().unwrap_or("").to_string());
+        storage.sort_by_key(|s| {
+            (
+                s["storage"].as_str().unwrap_or("").to_string(),
+                s["node"].as_str().unwrap_or("").to_string(),
+            )
+        });
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
         Ok(Reading {
-            snapshot: serde_json::json!({ "t": now, "nodes": nodes, "guests": guests }),
+            snapshot: serde_json::json!({
+                "t": now,
+                "nodes": nodes,
+                "guests": guests,
+                "storage": storage,
+                "tasks": tasks.ok().map(|t| shown_tasks(&t)),
+                "cluster": status.ok().map(|s| shown_cluster(&s)),
+            }),
             guests: refs,
         })
     }
@@ -491,6 +544,49 @@ fn shown_status(status: &str) -> &'static str {
     }
 }
 
+/// How many of the latest tasks the page is sent.
+const TASKS: usize = 60;
+
+/// The latest tasks, newest first. One still running has no `end` and no
+/// `status`; a finished one's status is `OK` or what went wrong.
+fn shown_tasks(data: &Value) -> Vec<Value> {
+    let mut tasks: Vec<&Value> = data.as_array().map(|a| a.iter().collect()).unwrap_or_default();
+    tasks.sort_by(|a, b| field(b, "starttime").total_cmp(&field(a, "starttime")));
+    tasks
+        .into_iter()
+        .take(TASKS)
+        .map(|task| {
+            let ended = task.get("endtime").map(number).filter(|end| *end > 0.0);
+            serde_json::json!({
+                "type": text(task, "type"),
+                "id": text(task, "id"),
+                "node": text(task, "node"),
+                "user": text(task, "user"),
+                "start": field(task, "starttime"),
+                "end": ended,
+                "status": ended.map(|_| text(task, "status")),
+            })
+        })
+        .collect()
+}
+
+/// The cluster's name and whether it has quorum. A host that is in no
+/// cluster has neither, and nothing to lose.
+fn shown_cluster(data: &Value) -> Value {
+    let cluster = data
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| text(row, "type") == "cluster"));
+    serde_json::json!({
+        "name": cluster.map(|c| text(c, "name")),
+        "quorate": cluster.map(|c| field(c, "quorate") != 0.0),
+    })
+}
+
+/// `9.0.3` from `pve-manager/9.0.3/025864202ebb6109`.
+fn pve_version(text: &str) -> String {
+    text.split('/').nth(1).unwrap_or(text).to_string()
+}
+
 fn text(row: &Value, key: &str) -> String {
     row.get(key).and_then(Value::as_str).unwrap_or("").to_string()
 }
@@ -569,6 +665,31 @@ mod tests {
         assert_eq!(shown_status("paused"), "running");
         assert_eq!(shown_status("stopped"), "stopped");
         assert_eq!(shown_status("unknown"), "stopped");
+    }
+
+    #[test]
+    fn tasks_come_newest_first_and_a_running_one_has_no_end() {
+        let tasks = shown_tasks(&serde_json::json!([
+            { "type": "vzdump", "id": "", "node": "pve1", "user": "root@pam", "starttime": 100, "endtime": 160, "status": "OK" },
+            { "type": "vzstart", "id": "101", "node": "pve2", "user": "root@pam", "starttime": 300 },
+            { "type": "qmstart", "id": "900", "node": "pve1", "user": "root@pam", "starttime": 200, "endtime": 201, "status": "no such VM" },
+        ]));
+        assert_eq!(tasks.len(), 3);
+        assert_eq!(tasks[0]["type"], "vzstart");
+        assert!(tasks[0]["end"].is_null() && tasks[0]["status"].is_null());
+        assert_eq!(tasks[1]["status"], "no such VM");
+        assert_eq!(tasks[2]["end"], 160.0);
+        assert_eq!(shown_tasks(&Value::Null).len(), 0);
+    }
+
+    #[test]
+    fn a_host_in_no_cluster_has_no_quorum_to_lose() {
+        let alone = shown_cluster(&serde_json::json!([{ "type": "node", "name": "pve", "online": 1 }]));
+        assert!(alone["name"].is_null() && alone["quorate"].is_null());
+        let three = shown_cluster(&serde_json::json!([{ "type": "cluster", "name": "lab", "quorate": 1, "nodes": 3 }]));
+        assert_eq!(three["name"], "lab");
+        assert_eq!(three["quorate"], true);
+        assert_eq!(pve_version("pve-manager/9.0.3/025864202ebb6109"), "9.0.3");
     }
 
     #[test]

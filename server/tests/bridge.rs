@@ -2152,6 +2152,28 @@ async fn the_feed_carries_readings_of_the_cluster() {
     assert_eq!(nodes[0]["status"], "online");
     assert_eq!(nodes[0]["loadavg"].as_array().unwrap().len(), 3);
     assert!(nodes[0]["loadavg"][0].is_number());
+    assert!(nodes[0]["wait"].as_f64().unwrap() > 0.0);
+    assert!(nodes[0]["maxswap"].as_f64().unwrap() > nodes[0]["swap"].as_f64().unwrap());
+    assert_eq!(nodes[0]["version"], "9.0.3");
+    assert!(pihole["diskwrite"].is_number());
+
+    // What the room's gear shows besides: storage (the shared one once,
+    // though Proxmox lists it under every node), tasks and the quorum.
+    let storage = snapshot["storage"].as_array().unwrap();
+    assert_eq!(storage.len(), 7);
+    assert_eq!(storage.iter().filter(|s| s["storage"] == "backups").count(), 1);
+    assert_eq!(storage[0]["storage"], "backups");
+    assert_eq!(storage[0]["shared"], true);
+    assert_eq!(storage[0]["node"], "");
+    assert!(storage[1]["maxdisk"].as_f64().unwrap() > storage[1]["disk"].as_f64().unwrap());
+    let tasks = snapshot["tasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 4);
+    assert_eq!(tasks[0]["type"], "aptupdate");
+    assert!(tasks[0]["end"].is_null());
+    assert_eq!(tasks[3]["type"], "vzdump");
+    assert_eq!(tasks[3]["status"], "OK");
+    assert_eq!(snapshot["cluster"]["name"], "mock");
+    assert_eq!(snapshot["cluster"]["quorate"], true);
 
     // A guest stopped on the host shows as stopped in a later reading.
     mock.mock.set_running(100, false);

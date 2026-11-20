@@ -15,17 +15,20 @@ version is in the [README](../README.md#controls).
   the console and the guest's figures (gauges, network rates, uptime, CPU
   history).
 - A computer room under the wall, right across it: cabinets of
-  blinking lamps and tape drives, with tape running from reel to reel. Each of the first few follows one node, and
-  blinks and winds as busily as that node is working.
-- Racks beside the wall and in the corners, as a firing room has them, each
-  with a clock (GMT, local, or time since the page opened), boards of status
-  lamps, three meters and a scope. The meters of the two racks next to the
-  monitors are real: the nodes' CPU on the left, their memory on the right.
-- Two big boards beyond those racks, over more cabinets: a tracking chart on
-  the left, and on the right a plot of each node's CPU over the last few
-  minutes. A row of lit signs runs along the top, and the side walls have
-  racks of their own. A wide window shows more of all this, and so does
-  turning the view.
+  blinking lamps and tape drives, with tape running from reel to reel. Each
+  follows something in the cluster, and blinks and winds as busily as that
+  is working: from the left, each node's CPU, then each node's disk traffic,
+  then each node's network traffic, and after those the busiest guests, one
+  to a cabinet.
+- Racks beside the wall, in the corners and along the side walls, as a
+  firing room has them, each with a clock, boards of status lamps, three
+  meters and a scope. All of it is the cluster's: see
+  [What the gear shows](#what-the-gear-shows).
+- Two big boards beyond the racks next to the monitors, over more cabinets:
+  on the left the cluster's status (its storage, fullest first, and its
+  latest tasks), and on the right a plot of each node's CPU over the last
+  few minutes. A row of lit signs runs along the top. A wide window shows
+  more of all this, and so does turning the view.
 - The terminal's keyboard on the desk, whose keys go down and stay down
   while you hold them. Its keys can be clicked too, and type into the
   console on the desk as the real ones would, by what their caps say
@@ -100,3 +103,48 @@ version is in the [README](../README.md#controls).
   that goes to the provider and comes back signed in, for the accounts the
   settings list. The sign-in settings card says whether it is on and
   through whom.
+
+## What the gear shows
+
+Nothing in the room is made up. Whatever the bridge's API token may not read
+is shown as not known: a dark lamp, a needle at rest, dashes on a clock.
+
+| Where | Clock | Lamps | Meters | Scope |
+| --- | --- | --- | --- | --- |
+| Rack left of the monitors | Time since the last task finished | One per guest, in the wall's order: green running, amber at 80% CPU or more, red stopped | Each node's CPU | The cluster's CPU |
+| Rack right of the monitors | Time since the last backup finished | One per guest: its memory, amber from 75%, red from 90% | Each node's memory | Network traffic, in and out |
+| Left corner rack | Local time | A row per storage, lit as far as it is full; amber from 80%, red from 90% | Each node's root disk | Disk traffic, read and written |
+| Right corner rack | GMT | One per task, newest first: green done, amber running, red failed | Each node's I/O wait (full scale is 25%) | Load average against cores |
+| Side wall racks, one per node | The node's uptime, as days, hours, minutes | That node's guests | Its load over 1, 5 and 15 minutes, against its cores | Its CPU |
+
+With fewer than four nodes, the side racks left over take a guest's uptime
+(the longest up, the latest started), and show the guests' disk fill,
+network traffic or disk traffic, with meters for the cluster's CPU, memory
+and storage. A scope fills its screen with the largest reading on it, so it
+shows the shape of the last few minutes, not a scale. A clock stops at 99 of
+its largest unit.
+
+The signs along the top, left to right. A lit sign is amber, a warning
+flashes, a fault is red:
+
+| Sign | Lit | Flashing | Red |
+| --- | --- | --- | --- |
+| QUORUM | The cluster has quorum (or the host is in no cluster) | | Quorum is lost |
+| NODES | Every node is online | | A node is offline |
+| GUESTS | A guest is running | | |
+| CPU | | A node is at 80% | A node is at 95% |
+| MEMORY | | A node is at 85% | A node is at 95% |
+| SWAP | Swap is in use | A node's is half full | A node's is 90% full |
+| IO WAIT | | A node waits 10% of its time on disks | 30% |
+| LOAD | | A minute's load is over the cores there are | Over twice that |
+| STORAGE | | A storage is 80% full | 90% full, or not available |
+| BACKUP | The latest backup finished well, or is running | | It failed |
+| TASKS | A task is running | | The last task to finish failed |
+| MIGRATE | A guest is being migrated | | |
+| NETWORK | Guests are sending or receiving | | |
+| DISK IO | Guests are reading or writing | | |
+| BRIDGE | Readings are arriving | | |
+| UPTIME | | A node came up in the last ten minutes | |
+| ALARM | | | Any other sign is red |
+
+CPU, MEMORY, IO WAIT, LOAD and STORAGE are lit steadily while all is well.

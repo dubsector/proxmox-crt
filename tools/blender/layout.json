@@ -429,30 +429,22 @@
   {
    "x": -29.45,
    "top": 14.7,
-   "z": -35.8,
-   "clock": "gmt",
-   "label": "GMT"
+   "z": -35.8
   },
   {
    "x": 29.45,
    "top": 14.7,
-   "z": -35.8,
-   "clock": "elapsed",
-   "label": "ELAPSED"
+   "z": -35.8
   },
   {
    "x": -60.05,
    "top": 14.7,
-   "z": -35.8,
-   "clock": "local",
-   "label": "LOCAL"
+   "z": -35.8
   },
   {
    "x": 60.05,
    "top": 14.7,
-   "z": -35.8,
-   "clock": "gmt",
-   "label": "GMT"
+   "z": -35.8
   }
  ],
  "sideRacks": [
@@ -463,16 +455,12 @@
     {
      "x": 32.4,
      "top": 14.7,
-     "z": 0,
-     "clock": "gmt",
-     "label": "GMT"
+     "z": 0
     },
     {
      "x": 26.099999999999998,
      "top": 14.7,
-     "z": 0,
-     "clock": "elapsed",
-     "label": "ELAPSED"
+     "z": 0
     }
    ]
   },
@@ -483,16 +471,12 @@
     {
      "x": -32.4,
      "top": 14.7,
-     "z": 0,
-     "clock": "gmt",
-     "label": "GMT"
+     "z": 0
     },
     {
      "x": -26.099999999999998,
      "top": 14.7,
-     "z": 0,
-     "clock": "elapsed",
-     "label": "ELAPSED"
+     "z": 0
     }
    ]
   }

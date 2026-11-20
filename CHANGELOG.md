@@ -5,6 +5,17 @@ What changed in each release, newest first. Containers take a release with
 
 ## Unreleased
 
+- Everything in the room now shows the cluster. The racks' clocks count the
+  time since the last task and the last backup and each node's uptime; their
+  lamps are the guests, the storage and the tasks; their meters and scopes
+  are CPU, memory, disk, I/O wait, load and traffic. The signs along the top
+  light for quorum, nodes, storage, backups and the rest, and turn red for a
+  fault. The left board lists storage and the latest tasks in place of the
+  tracking chart, and every cabinet under the wall follows a node or a busy
+  guest. `docs/room.md` has the whole list.
+- The bridge reads storage, tasks, quorum and each node's I/O wait and swap.
+  The storage board needs `Datastore.Audit` on the token's role:
+  `pveum role modify CRTWall --privs Datastore.Audit --append 1`.
 - The README is shorter and opens with a picture; the room's controls and the
   bridge's settings moved to `docs/`.
 - The build check runs shellcheck on the LXC scripts, and a release runs each

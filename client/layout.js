@@ -88,10 +88,10 @@ export function officeLayout() {
   });
 
   var racks = [
-    { x: -rackX, top: rackTop, z: WALL_Z + 0.2, clock: "gmt", label: "GMT" },
-    { x: rackX, top: rackTop, z: WALL_Z + 0.2, clock: "elapsed", label: "ELAPSED" },
-    { x: -cornerX, top: rackTop, z: WALL_Z + 0.2, clock: "local", label: "LOCAL" },
-    { x: cornerX, top: rackTop, z: WALL_Z + 0.2, clock: "gmt", label: "GMT" },
+    { x: -rackX, top: rackTop, z: WALL_Z + 0.2 },
+    { x: rackX, top: rackTop, z: WALL_Z + 0.2 },
+    { x: -cornerX, top: rackTop, z: WALL_Z + 0.2 },
+    { x: cornerX, top: rackTop, z: WALL_Z + 0.2 },
   ];
   // The side walls' racks, facing in. Each side's racks are laid out in a
   // frame of their own (x along the wall), which stands at `x` turned by
@@ -99,7 +99,7 @@ export function officeLayout() {
   var sideRacks = [-1, 1].map(function (side) {
     var along = [];
     for (var k = 0; k < SIDE_RACKS; k++) {
-      along.push({ x: side * (WALL_Z + 0.6 + PANEL.width / 2 + k * (PANEL.width + 0.3)), top: rackTop, z: 0, clock: k ? "elapsed" : "gmt", label: k ? "ELAPSED" : "GMT" });
+      along.push({ x: side * (WALL_Z + 0.6 + PANEL.width / 2 + k * (PANEL.width + 0.3)), top: rackTop, z: 0 });
     }
     return { x: side * (sideWallX - 0.2), turn: (-side * Math.PI) / 2, racks: along };
   });
