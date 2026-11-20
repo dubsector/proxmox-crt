@@ -11,6 +11,7 @@ import { createConsoles } from "./consoles.js";
 import { openGate, cardOpen } from "./gate.js";
 import { createSecurity } from "./security.js";
 import { keyBytes, MODIFIERS } from "./keymap.js";
+import { createTelemetry } from "./telemetry.js";
 
 var params = new URLSearchParams(location.search);
 var HUD = params.get("hud") === "1" || window.CRT_HUD === true;
@@ -38,6 +39,10 @@ var flashTimer = null;
 var deskQueued = false;
 
 var scene = null;
+// What the room's gear shows of the cluster, and the reading it was last
+// given.
+var telemetry = null;
+var room = null;
 var keypad = null;
 var snapshot = null;
 var guests = []; // in wall order: monitor n shows guests[n - 1]
@@ -291,8 +296,9 @@ function draw() {
     var node = snapshot.nodes[n];
     if (!node) scene.show(n + 1, null, "off", true);
     else scene.show(n + 1, nodeCard(wallGrid, node, snapshot.guests), node.status === "online" ? "live" : "offline", true);
-    if (node) scene.setNodeLoad(n + 1, node.status === "online" ? node.cpu : -1, node.status === "online" && node.maxmem ? node.mem / node.maxmem : 0);
+    if (node) scene.setNodeLoad(n + 1, node.status === "online" ? node.cpu : -1);
   }
+  if (room) scene.setRoom(room);
   drawDesk();
   drawReadout();
 }
@@ -397,6 +403,10 @@ function onSnapshot(snap) {
   if (!scene) {
     if (!build(snap)) return;
   }
+  // What the room's gear shows. Every snapshot is read: the scopes'
+  // traces and the rates come from one to the next.
+  if (!telemetry) telemetry = createTelemetry(scene.gear);
+  room = telemetry.read(snap);
   keypad.resize(Math.min(guests.length, scene.wallCount), scene.columns);
   // Guests are numbered in order, so one added or removed moves the rest
   // along: keep hold of the guest that was selected, not of its number.

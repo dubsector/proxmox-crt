@@ -182,7 +182,10 @@ pub async fn start(addr: &str) -> Running {
     let app = Router::new()
         .route("/api2/json/version", get(version))
         .route("/api2/json/cluster/resources", get(resources))
+        .route("/api2/json/cluster/tasks", get(tasks))
+        .route("/api2/json/cluster/status", get(cluster_status))
         .route("/api2/json/nodes/{node}/status", get(node_status))
+        .route("/api2/json/nodes/{node}/time", get(node_time))
         .route("/api2/json/nodes/{node}/{kind}/{vmid}/termproxy", post(termproxy))
         .route("/api2/json/nodes/{node}/{kind}/{vmid}/vncwebsocket", get(vncwebsocket))
         .route("/api2/json/nodes/{node}/{kind}/{vmid}/status/{action}", post(power))
@@ -265,12 +268,19 @@ async fn resources(State(mock): State<Arc<Mock>>, headers: HeaderMap) -> Respons
             "maxdisk": 16.0 * GIB,
             "netin": if g.running { (rate * t).floor() } else { 0.0 },
             "netout": if g.running { (rate * 0.4 * t).floor() } else { 0.0 },
+            "diskread": if g.running { (rate * 0.7 * t).floor() } else { 0.0 },
+            "diskwrite": if g.running { (rate * 0.2 * t).floor() } else { 0.0 },
             "uptime": if g.running { 86400 * (1 + g.vmid % 30) + t as u64 } else { 0 },
         }));
     }
     // What Proxmox lists besides guests, which the bridge has to step over.
     rows.push(json!({ "id": "lxc/999", "type": "lxc", "vmid": 999, "name": "debian-13-template", "node": NODES[0], "status": "stopped", "template": 1, "maxcpu": 1, "maxmem": GIB, "maxdisk": 4.0 * GIB }));
-    rows.push(json!({ "id": "storage/pve/local", "type": "storage", "storage": "local", "node": NODES[0], "status": "available", "disk": 180.0 * GIB, "maxdisk": 480.0 * GIB }));
+    for (at, node) in NODES.iter().enumerate() {
+        rows.push(json!({ "id": format!("storage/{node}/local"), "type": "storage", "storage": "local", "node": node, "status": "available", "plugintype": "dir", "shared": 0, "disk": (38.0 + 17.0 * at as f64) * GIB, "maxdisk": 94.0 * GIB }));
+        rows.push(json!({ "id": format!("storage/{node}/local-zfs"), "type": "storage", "storage": "local-zfs", "node": node, "status": "available", "plugintype": "zfspool", "shared": 0, "disk": (180.0 + 60.0 * at as f64) * GIB, "maxdisk": 480.0 * GIB }));
+        // Shared storage is listed under every node.
+        rows.push(json!({ "id": format!("storage/{node}/backups"), "type": "storage", "storage": "backups", "node": node, "status": "available", "plugintype": "pbs", "shared": 1, "disk": 2900.0 * GIB, "maxdisk": 3600.0 * GIB }));
+    }
     for (at, node) in NODES.iter().enumerate() {
         rows.push(json!({
             "id": format!("node/{node}"),
@@ -299,7 +309,60 @@ async fn node_status(State(mock): State<Arc<Mock>>, headers: HeaderMap, Path(nod
     let t = mock.started.elapsed().as_secs_f64();
     let load = 0.8 + wander(node.len() as u64 + u64::from(node.as_bytes()[node.len() - 1]), t);
     // Proxmox gives the load averages as strings.
-    Json(json!({ "data": { "loadavg": [format!("{load:.2}"), format!("{:.2}", load * 0.9), format!("{:.2}", load * 0.8)], "uptime": 61 * 86400 } })).into_response()
+    Json(json!({ "data": {
+        "loadavg": [format!("{load:.2}"), format!("{:.2}", load * 0.9), format!("{:.2}", load * 0.8)],
+        "uptime": 61 * 86400,
+        "wait": 0.004 + 0.02 * wander(node.len() as u64 * 5, t),
+        "swap": { "used": 0.4 * GIB, "total": 8.0 * GIB, "free": 7.6 * GIB },
+        "pveversion": "pve-manager/9.0.3/mock",
+    } }))
+    .into_response()
+}
+
+/// A night's backup, a guest started by hand, one that failed and one
+/// still going.
+async fn tasks(State(mock): State<Arc<Mock>>, headers: HeaderMap) -> Response {
+    if let Err(r) = allowed(&headers) {
+        return r;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let began = now - mock.started.elapsed().as_secs();
+    Json(json!({ "data": [
+        { "upid": "UPID:pve1:1", "type": "vzdump", "id": "", "node": "pve1", "user": "root@pam", "starttime": began - 7 * 3600, "endtime": began - 7 * 3600 + 1260, "status": "OK" },
+        { "upid": "UPID:pve2:2", "type": "vzstart", "id": "104", "node": "pve2", "user": "root@pam", "starttime": began - 2400, "endtime": began - 2397, "status": "OK" },
+        { "upid": "UPID:pve1:3", "type": "qmstart", "id": "900", "node": "pve1", "user": "root@pam", "starttime": began - 900, "endtime": began - 899, "status": "command 'qm start' failed: exit code 255" },
+        { "upid": "UPID:pve3:4", "type": "aptupdate", "id": "", "node": "pve3", "user": "root@pam", "starttime": began - 5 },
+    ] }))
+    .into_response()
+}
+
+/// A host an hour east of Greenwich.
+async fn node_time(headers: HeaderMap, Path(node): Path<String>) -> Response {
+    if let Err(r) = allowed(&headers) {
+        return r;
+    }
+    if !NODES.contains(&node.as_str()) {
+        return no(StatusCode::INTERNAL_SERVER_ERROR, "no such cluster node");
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    Json(json!({ "data": { "time": now, "localtime": now + 3600, "timezone": "Europe/Berlin" } })).into_response()
+}
+
+async fn cluster_status(headers: HeaderMap) -> Response {
+    if let Err(r) = allowed(&headers) {
+        return r;
+    }
+    let mut rows = vec![json!({ "id": "cluster", "type": "cluster", "name": "mock", "nodes": NODES.len(), "quorate": 1, "version": 3 })];
+    for (at, node) in NODES.iter().enumerate() {
+        rows.push(json!({ "id": format!("node/{node}"), "type": "node", "name": node, "nodeid": at + 1, "online": 1, "local": u8::from(at == 0) }));
+    }
+    Json(json!({ "data": rows })).into_response()
 }
 
 async fn termproxy(State(mock): State<Arc<Mock>>, headers: HeaderMap, Path((node, kind, vmid)): Path<(String, String, u64)>) -> Response {

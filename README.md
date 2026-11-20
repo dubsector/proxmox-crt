@@ -48,7 +48,7 @@ into it. Nothing is compiled in the container. Then:
 
    ```sh
    pveum user add crt@pve
-   pveum role add CRTWall --privs "VM.Audit VM.Console VM.PowerMgmt Sys.Audit"
+   pveum role add CRTWall --privs "VM.Audit VM.Console VM.PowerMgmt Sys.Audit Datastore.Audit"
    pveum acl modify / --users crt@pve --roles CRTWall
    pveum user token add crt@pve wall --privsep 0
    ```

@@ -3,11 +3,22 @@
 // Proxmox's GET /cluster/resources returns for nodes and guests, under the
 // same names, so the rest of the page never knows which one it is talking to.
 //
-//   snapshot = { t, nodes: [node], guests: [guest] }
-//   node  = { node, status, cpu, maxcpu, mem, maxmem, disk, maxdisk, uptime, loadavg }
+//   snapshot = { t, nodes: [node], guests: [guest], storage: [storage],
+//                tasks: [task] or null, cluster: { name, quorate } or null,
+//                time: seconds since midnight on the host's clock, or null }
+//   node  = { node, status, cpu, maxcpu, mem, maxmem, disk, maxdisk, uptime,
+//             loadavg, wait (0..1 of its time waiting on disks), swap,
+//             maxswap, version }; the last five null where not known
 //   guest = { vmid, name, type ("lxc" | "qemu"), node, status ("running" |
 //             "stopped"), cpu (0..1 of maxcpu), maxcpu, mem, maxmem, disk,
-//             maxdisk, netin, netout (byte counters), uptime (s), tags }
+//             maxdisk, netin, netout, diskread, diskwrite (byte counters),
+//             uptime (s), tags }
+//   storage = { storage, node ("" when shared), shared, kind, status
+//             ("available"), disk, maxdisk }
+//   task  = { type, id, node, user, start, end, status }, newest first; one
+//             still running has a null end and status, a finished one's
+//             status is "OK" or what went wrong. Times are on the clock t
+//             is on.
 
 var GIB = 1024 * 1024 * 1024;
 
@@ -73,6 +84,8 @@ export function createDemoSource(options) {
       disk: Math.floor(maxdisk * (0.15 + random() * 0.6)),
       netin: Math.floor(random() * 5e9),
       netout: Math.floor(random() * 5e9),
+      diskread: Math.floor(random() * 2e10),
+      diskwrite: Math.floor(random() * 8e9),
       uptime: Math.floor(3600 + random() * 40 * 86400),
       rate: 2e3 + random() * random() * 4e6,
     });
@@ -96,9 +109,34 @@ export function createDemoSource(options) {
       maxmem: 64 * GIB,
       disk: (120 + 30 * n) * GIB,
       maxdisk: 480 * GIB,
-      uptime: (61 - 9 * n) * 86400,
+      uptime: (61 - 9 * n) * 86400 + 4000 * (n + 1),
       loadavg: [1.2, 1.0, 0.9],
+      wait: 0.01,
+      swap: Math.floor((0.2 + 0.5 * n) * GIB),
+      maxswap: 8 * GIB,
+      version: "9.0.3",
     });
+  }
+
+  // Each node's own disks, and one store they all share for backups.
+  var storage = [];
+  for (var s = 0; s < nodeCount; s++) {
+    storage.push({ storage: "local", node: "pve" + (s + 1), shared: false, kind: "dir", status: "available", disk: (38 + 17 * s) * GIB, maxdisk: 94 * GIB });
+    storage.push({ storage: "local-zfs", node: "pve" + (s + 1), shared: false, kind: "zfspool", status: "available", disk: (120 + 30 * s) * GIB, maxdisk: 480 * GIB });
+  }
+  storage.push({ storage: "backups", node: "", shared: true, kind: "pbs", status: "available", disk: 2950 * GIB, maxdisk: 3600 * GIB });
+
+  // What has been done lately, newest first: last night's backup, and a
+  // few guests started and stopped since, one of which would not start.
+  var tasks = [
+    { type: "vzstart", id: "104", node: "pve" + (1 + (4 % nodeCount)), user: "root@pam", start: -2400, end: -2397, status: "OK" },
+    { type: "qmstart", id: "900", node: "pve1", user: "root@pam", start: -9000, end: -8999, status: "start failed: no such logical volume" },
+    { type: "aptupdate", id: "", node: "pve1", user: "root@pam", start: -14400, end: -14370, status: "OK" },
+    { type: "vzdump", id: "", node: "pve1", user: "root@pam", start: -26460, end: -25200, status: "OK" },
+  ];
+  function task(type, id, node, lasts) {
+    tasks.unshift({ type: type, id: String(id), node: node, user: "root@pam", start: t, end: null, status: null, until: t + lasts });
+    if (tasks.length > 60) tasks.pop();
   }
 
   // A stopped guest uses nothing; one just started has yet to.
@@ -109,7 +147,8 @@ export function createDemoSource(options) {
     g.mem = 0;
   }
 
-  function advance(seconds) {
+  // settling: the first readings, in which nothing happens to any guest.
+  function advance(seconds, settling) {
     t += seconds;
     var usedCores = {};
     var usedMem = {};
@@ -126,20 +165,36 @@ export function createDemoSource(options) {
       g.mem = Math.floor(g.maxmem * clamp(g.baseMem + (random() - 0.5) * 0.04, 0.05, 0.98));
       g.netin += Math.floor(g.rate * seconds * (0.3 + random() * 1.4));
       g.netout += Math.floor(g.rate * seconds * 0.4 * (0.3 + random() * 1.4));
+      g.diskread += Math.floor(g.rate * seconds * 0.6 * random());
+      g.diskwrite += Math.floor(g.rate * seconds * 0.25 * (0.2 + random()));
       g.uptime += seconds;
       usedCores[g.node] = (usedCores[g.node] || 0) + g.cpu * g.maxcpu;
       usedMem[g.node] = (usedMem[g.node] || 0) + g.mem;
     }
     // Every so often a guest is stopped, or a stopped one started, so the
     // wall has something to react to.
-    if (guests.length && random() < seconds / 25) {
+    if (!settling && guests.length && random() < seconds / 25) {
       var pick = guests[Math.floor(random() * guests.length)];
-      setStatus(pick, pick.status === "running" ? "stopped" : "running");
+      var start = pick.status !== "running";
+      setStatus(pick, start ? "running" : "stopped");
+      task((pick.type === "qemu" ? "qm" : "vz") + (start ? "start" : "shutdown"), pick.vmid, pick.node, 3);
     }
+    // Now and then a guest is backed up, which takes a while.
+    if (!settling && guests.length && random() < seconds / 240) {
+      var kept = guests[Math.floor(random() * guests.length)];
+      task("vzdump", kept.vmid, kept.node, 40 + Math.floor(random() * 60));
+    }
+    tasks.forEach(function (job) {
+      if (job.end === null && t >= job.until) {
+        job.end = job.until;
+        job.status = "OK";
+      }
+    });
     nodes.forEach(function (node) {
       node.cpu = clamp((usedCores[node.node] || 0) / node.maxcpu + 0.02, 0, 1);
       node.mem = Math.min(node.maxmem, (usedMem[node.node] || 0) + 6 * GIB);
       node.uptime += seconds;
+      node.wait = clamp(node.wait * 0.8 + random() * random() * 0.02, 0, 1);
       var load = node.cpu * node.maxcpu;
       node.loadavg = [
         node.loadavg[0] * 0.7 + load * 0.3,
@@ -147,6 +202,13 @@ export function createDemoSource(options) {
         node.loadavg[2] * 0.98 + load * 0.02,
       ];
     });
+  }
+
+  // Seconds since midnight; `clock` stands in for the real one in tests.
+  function hostTime() {
+    if (opts.clock) return opts.clock();
+    var now = new Date();
+    return now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
   }
 
   function snapshot() {
@@ -164,8 +226,21 @@ export function createDemoSource(options) {
           maxdisk: node.maxdisk,
           uptime: node.uptime,
           loadavg: node.loadavg.slice(),
+          wait: node.wait,
+          swap: node.swap,
+          maxswap: node.maxswap,
+          version: node.version,
         };
       }),
+      storage: storage.map(function (store) {
+        return { storage: store.storage, node: store.node, shared: store.shared, kind: store.kind, status: store.status, disk: store.disk, maxdisk: store.maxdisk };
+      }),
+      tasks: tasks.map(function (job) {
+        return { type: job.type, id: job.id, node: job.node, user: job.user, start: job.start, end: job.end, status: job.status };
+      }),
+      cluster: { name: "demo", quorate: true },
+      // The demo's host keeps the time of whoever is looking at it.
+      time: hostTime(),
       guests: guests.map(function (g) {
         return {
           vmid: g.vmid,
@@ -181,6 +256,8 @@ export function createDemoSource(options) {
           maxdisk: g.maxdisk,
           netin: g.netin,
           netout: g.netout,
+          diskread: g.diskread,
+          diskwrite: g.diskwrite,
           uptime: g.uptime,
           tags: g.tags,
         };
@@ -197,7 +274,7 @@ export function createDemoSource(options) {
 
   advance(0);
   // Settle the first readings so nothing starts at zero.
-  for (var k = 0; k < 5; k++) advance(intervalMs / 1000);
+  for (var k = 0; k < 5; k++) advance(intervalMs / 1000, true);
 
   return {
     // Calls fn with a snapshot now and after every change.

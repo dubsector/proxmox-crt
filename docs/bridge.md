@@ -71,20 +71,33 @@ guest's terminal. The token never reaches a browser.
   shows the fingerprint to compare with the one Proxmox shows, and the bridge
   then accepts that certificate and no other. A certificate from a public
   authority is verified the usual way.
-- **Cluster.** Point it at any one node; it reads every node and guest the
-  token may see.
+- **Cluster.** Point it at any one node; it reads every node, guest and
+  storage the token may see, the latest tasks and the quorum.
 
 ## The API token
 
-The token needs `VM.Audit`, `VM.Console` and `Sys.Audit`, and `VM.PowerMgmt`
-for the power switch. On the Proxmox host:
+The token needs `VM.Audit`, `VM.Console` and `Sys.Audit`, `VM.PowerMgmt`
+for the power switch, and `Datastore.Audit` for the room's storage board and
+lamps. On the Proxmox host:
 
 ```sh
 pveum user add crt@pve
-pveum role add CRTWall --privs "VM.Audit VM.Console VM.PowerMgmt Sys.Audit"
+pveum role add CRTWall --privs "VM.Audit VM.Console VM.PowerMgmt Sys.Audit Datastore.Audit"
 pveum acl modify / --users crt@pve --roles CRTWall
 pveum user token add crt@pve wall --privsep 0
 ```
+
+A role made before the storage board has no `Datastore.Audit`; the board then
+lists no storage, and nothing else minds. To add it:
+
+```sh
+pveum role modify CRTWall --privs Datastore.Audit --append 1
+```
+
+Besides the nodes and guests, each reading takes the storage from the same
+listing, each node's status (load average, I/O wait, swap), the cluster's
+latest tasks, its quorum and the host's time of day. Whatever the token may not read is shown in the
+room as not known: dark lamps, needles at rest, dashes on a clock.
 
 ## Settings
 

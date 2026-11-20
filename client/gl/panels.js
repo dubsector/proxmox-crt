@@ -1,8 +1,9 @@
 // The racks either side of the wall of monitors, as a firing room has
 // them: a clock, a board of status lamps, a row of meters, a scope and a
-// smaller board of lamps in each. The clocks keep time and the meters follow the nodes; the rest is
-// set dressing with a pulse. Plain shapes, like the rest of the grey-box
-// room.
+// smaller board of lamps in each. All of it shows the cluster (see
+// telemetry.js for what each rack is given): until a rack is told what to
+// show, its lamps are dark, its needles at rest and its clock all dashes.
+// Plain shapes, like the rest of the grey-box room.
 //
 // All the lamps are one draw call, and all the clocks' segments another.
 import {
@@ -51,50 +52,56 @@ export var PANEL = {
 
 var CLOCK_ON = new Color(1.0, 0.62, 0.1);
 var CLOCK_OFF = new Color(0.05, 0.03, 0.008);
-// What a status lamp can show, and how often: mostly nothing or green.
-var LAMPS = [
-  [new Color(0.035, 0.045, 0.04), 0.42],
-  [new Color(0.2, 0.9, 0.35), 0.4],
-  [new Color(1.0, 0.62, 0.1), 0.13],
-  [new Color(1.0, 0.16, 0.08), 0.05],
-];
-var LAMP_CHANGE_S = 0.6;
+// What a status lamp can show: nothing, green, amber, red (telemetry.js's
+// DARK, GREEN, AMBER and RED).
+var LAMPS = [new Color(0.035, 0.045, 0.04), new Color(0.2, 0.9, 0.35), new Color(1.0, 0.62, 0.1), new Color(1.0, 0.16, 0.08)];
 var SCOPE_POINTS = 96;
 // How far a meter's needle swings either side of straight up.
 var METER_SWING = 1.05;
 
-function pickLamp() {
-  var roll = Math.random();
-  for (var i = 0; i < LAMPS.length; i++) {
-    roll -= LAMPS[i][1];
-    if (roll <= 0) return LAMPS[i][0];
-  }
-  return LAMPS[0][0];
-}
-
-function labelTexture(text) {
+// A clock's label, which can be written again: what a clock counts
+// depends on the cluster.
+function labelTexture() {
   if (typeof document === "undefined") return null;
   var canvas = document.createElement("canvas");
   canvas.width = 512;
   canvas.height = 48;
-  var ctx = canvas.getContext("2d");
-  if (!ctx) return null;
+  if (!canvas.getContext("2d")) return null;
+  var texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  return texture;
+}
+
+function writeLabel(texture, text) {
+  var ctx = texture.image.getContext("2d");
+  ctx.clearRect(0, 0, 512, 48);
   ctx.fillStyle = "#d9d3bd";
   ctx.font = "bold 30px ui-monospace, Menlo, Consolas, monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(text.split("").join(" "), 256, 26);
-  var texture = new CanvasTexture(canvas);
-  texture.colorSpace = SRGBColorSpace;
-  return texture;
+  // Letters apart, as engraved labels have them, and no wider than the plate.
+  ctx.fillText(text.split("").join(text.length > 12 ? "\u200a" : " "), 256, 26, 500);
+  texture.needsUpdate = true;
+}
+
+// The six digits of a count of seconds: hours, minutes and seconds
+// ("hms", or "day" for a time of day), or days, hours and minutes ("dhm").
+// A count stops at 99 of its largest.
+export function clockDigits(seconds, form) {
+  var s = Math.max(0, Math.floor(seconds));
+  // A time of day goes round at midnight.
+  if (form === "day") s %= 86400;
+  var parts = form === "dhm" ? [Math.floor(s / 86400), Math.floor(s / 3600) % 24, Math.floor(s / 60) % 60] : [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60];
+  if (parts[0] > 99) parts = form === "dhm" ? [99, 23, 59] : [99, 59, 59];
+  return two(parts[0]) + two(parts[1]) + two(parts[2]);
 }
 
 function two(n) {
   return (n < 10 ? "0" : "") + n;
 }
 
-// options: { racks: [{ x, top, z, clock: "gmt", "local" or "elapsed", label }] where
-// each rack's top edge and face are, still: no movement (reduced motion) }
+// options: { racks: [{ x, top, z }] where each rack's top edge and face
+// are, still: no movement (reduced motion) }
 export function createPanels(options) {
   var racks = options.racks;
   var still = !!options.still;
@@ -156,7 +163,7 @@ export function createPanels(options) {
     // The clock: hours, minutes and seconds.
     var clockY = rack.top - P.clockTop - P.clockHeight / 2;
     box(P.width - 0.9, P.clockHeight, 0.1, rack.x, clockY, rack.z + 0.03, panelMat);
-    var label = labelTexture(rack.label || "");
+    var label = labelTexture();
     if (label) {
       var labelMat = new MeshBasicMaterial({ map: label, transparent: true });
       add(group, new PlaneGeometry(4.4, 0.41), labelMat, rack.x, clockY + 0.95, face + 0.06);
@@ -205,7 +212,7 @@ export function createPanels(options) {
       var lampY = row < P.boardRows ? P.boardTop + (row + 0.5) * P.boardPitchY : P.lowerTop + (row - P.boardRows + 0.5) * P.boardPitchY;
       at.set(rack.x + (col - (P.boardCols - 1) / 2) * P.boardPitchX, rack.top - lampY, face + 0.07);
       lamps.setMatrixAt(i * lampsPer + l, matrix.compose(at, flat, one));
-      lamps.setColorAt(i * lampsPer + l, pickLamp());
+      lamps.setColorAt(i * lampsPer + l, LAMPS[0]);
     }
 
     // The meters: a face, a red band at the top of its scale, a needle.
@@ -225,7 +232,7 @@ export function createPanels(options) {
       group.add(pivot);
       add(pivot, new BoxGeometry(0.05, 0.8, 0.02), needleMat, 0, 0.4, 0);
       pivot.rotation.z = METER_SWING;
-      needles.push({ pivot: pivot, value: 0, goal: 0, given: null, hold: m * 0.7 });
+      needles.push({ pivot: pivot, value: 0, given: null, phase: m * 0.7 });
     }
 
     // The scope.
@@ -243,23 +250,24 @@ export function createPanels(options) {
     group.add(new Line(traceGeometry, traceMat));
     owned.push(traceGeometry);
 
-    return { needles: needles, trace: traceGeometry, scopeY: scopeY, shown: "", kind: i % 2 };
+    return { needles: needles, trace: traceGeometry, scopeY: scopeY, shown: "", label: label, labelText: null, clock: null, clockAt: 0, scope: null, lampCodes: null };
   });
 
-  var started = Date.now();
-  function clockText(rack) {
-    if (rack.clock === "elapsed") {
-      var s = Math.floor((Date.now() - started) / 1000);
-      return two(Math.floor(s / 3600) % 100) + two(Math.floor(s / 60) % 60) + two(s % 60);
-    }
+  // A clock keeps the time of day, or counts on from what it was last
+  // told; one told nothing shows dashes.
+  function clockText(st) {
+    var clock = st.clock;
+    if (!clock) return "------";
     var now = new Date();
-    if (rack.clock === "local") return two(now.getHours()) + two(now.getMinutes()) + two(now.getSeconds());
-    return two(now.getUTCHours()) + two(now.getUTCMinutes()) + two(now.getUTCSeconds());
+    if (clock.kind === "local") return two(now.getHours()) + two(now.getMinutes()) + two(now.getSeconds());
+    if (clock.kind === "gmt") return two(now.getUTCHours()) + two(now.getUTCMinutes()) + two(now.getUTCSeconds());
+    if (typeof clock.seconds !== "number") return "------";
+    return clockDigits(clock.seconds + (clock.ticking ? (Date.now() - st.clockAt) / 1000 : 0), clock.form);
   }
   function setClocks() {
     var changed = false;
     racks.forEach(function (rack, i) {
-      var text = clockText(rack);
+      var text = clockText(state[i]);
       if (text === state[i].shown) return;
       state[i].shown = text;
       for (var d = 0; d < 6; d++) {
@@ -275,21 +283,25 @@ export function createPanels(options) {
     n.pivot.rotation.z = METER_SWING - Math.max(0, Math.min(1, n.value)) * 2 * METER_SWING;
   }
 
-  // The trace: a wave on the first kind of scope, a pulse on the other.
+  // The trace: the readings the scope was given, oldest on the left, from
+  // the bottom of the screen up. With none it lies flat along the bottom.
+  // A trace is never quite steady, unless the room is to keep still.
   function drawTrace(st, t) {
     var position = st.trace.getAttribute("position");
     var half = P.scopeHeight / 2 - 0.35;
+    var given = st.scope;
     for (var p = 0; p < SCOPE_POINTS; p++) {
-      var f = p / (SCOPE_POINTS - 1);
-      var y;
-      if (st.kind === 0) y = Math.sin(f * 15 + t * 3.1) * 0.55 + Math.sin(f * 41 - t * 5.3) * 0.2;
-      else {
-        var beat = (f * 3 - t * 0.8) % 1;
-        if (beat < 0) beat += 1;
-        y = beat < 0.06 ? beat / 0.06 : beat < 0.14 ? 1 - ((beat - 0.06) / 0.08) * 1.5 : beat < 0.2 ? -0.5 + ((beat - 0.14) / 0.06) * 0.5 : Math.sin(f * 60 + t * 9) * 0.03;
-        y *= 0.85;
+      var v = 0;
+      if (given && given.length) {
+        // The scope has as many points as it has; the readings are spread
+        // across them.
+        var at = (p / (SCOPE_POINTS - 1)) * (given.length - 1);
+        var lo = Math.floor(at);
+        var hi = Math.min(given.length - 1, lo + 1);
+        v = given[lo] + (given[hi] - given[lo]) * (at - lo);
       }
-      position.setY(p, st.scopeY + y * half);
+      var shimmer = still ? 0 : Math.sin(p * 1.9 + t * 11) * 0.012;
+      position.setY(p, st.scopeY + (Math.max(0, Math.min(1, v)) * 1.8 - 0.9 + shimmer) * half);
     }
     position.needsUpdate = true;
   }
@@ -301,21 +313,52 @@ export function createPanels(options) {
   lamps.instanceMatrix.needsUpdate = true;
   segments.instanceMatrix.needsUpdate = true;
 
-  var sinceLamp = 0;
   var time = 0;
 
   return {
     group: group,
     shell: shell,
-    // What meter `m` of rack `i` reads, 0..1; null lets it wander.
-    setMeter: function (i, m, value) {
-      var n = state[i] && state[i].needles[m];
-      if (!n) return;
-      n.given = value;
-      if (value !== null && still) {
-        n.value = value;
-        setNeedle(n);
+    // How many lamps each rack's boards have between them, and how many
+    // to a row.
+    lampsPer: lampsPer,
+    lampCols: P.boardCols,
+    scopePoints: SCOPE_POINTS,
+    // What rack `i` shows: { label: over its clock, clock: { kind: "gmt" or
+    // "local" } or { seconds, ticking, form: "hms", "dhm" or "day" } (seconds
+    // null: not known), lamps: a code for each (0 dark, 1 green, 2 amber,
+    // 3 red), meters: [0..1, or null for not known], scope: readings 0..1,
+    // oldest first }.
+    set: function (i, reading) {
+      var st = state[i];
+      if (!st) return;
+      if (st.label && reading.label !== st.labelText) {
+        st.labelText = reading.label;
+        writeLabel(st.label, reading.label || "");
       }
+      st.clock = reading.clock || null;
+      st.clockAt = Date.now();
+      var codes = reading.lamps || [];
+      var changed = false;
+      if (!st.lampCodes) st.lampCodes = new Uint8Array(lampsPer);
+      for (var l = 0; l < lampsPer; l++) {
+        var code = codes[l] || 0;
+        if (code === st.lampCodes[l]) continue;
+        st.lampCodes[l] = code;
+        lamps.setColorAt(i * lampsPer + l, LAMPS[code] || LAMPS[0]);
+        changed = true;
+      }
+      if (changed) lamps.instanceColor.needsUpdate = true;
+      st.needles.forEach(function (n, m) {
+        var value = reading.meters ? reading.meters[m] : null;
+        n.given = typeof value === "number" ? Math.max(0, Math.min(1, value)) : null;
+        if (still) {
+          n.value = n.given || 0;
+          setNeedle(n);
+        }
+      });
+      st.scope = reading.scope || null;
+      if (still) drawTrace(st, 0);
+      setClocks();
     },
     // Moves everything on by dt seconds. True while anything is moving,
     // which is always unless the room is to keep still.
@@ -323,25 +366,12 @@ export function createPanels(options) {
       setClocks();
       if (still || !racks.length) return false;
       time += dt;
-      sinceLamp += dt;
-      if (sinceLamp >= LAMP_CHANGE_S) {
-        sinceLamp = 0;
-        lamps.setColorAt(Math.floor(Math.random() * lamps.count), pickLamp());
-        lamps.instanceColor.needsUpdate = true;
-      }
       state.forEach(function (st) {
         st.needles.forEach(function (n) {
-          if (n.given !== null) {
-            // A needle is never quite still.
-            n.goal = n.given + Math.sin(time * 7 + n.hold) * 0.008;
-          } else {
-            n.hold -= dt;
-            if (n.hold <= 0) {
-              n.goal = 0.15 + Math.random() * 0.6;
-              n.hold = 1 + Math.random() * 4;
-            }
-          }
-          n.value += (n.goal - n.value) * (1 - Math.exp(-dt / 0.35));
+          // A needle that reads something is never quite still; one that
+          // reads nothing lies at rest.
+          var goal = n.given === null ? 0 : n.given + Math.sin(time * 7 + n.phase) * 0.008;
+          n.value += (goal - n.value) * (1 - Math.exp(-dt / 0.35));
           setNeedle(n);
         });
         drawTrace(st, time);
