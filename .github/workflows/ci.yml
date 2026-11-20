@@ -33,3 +33,11 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The scripts source the community-scripts engine at run time, which
+      # shellcheck cannot follow.
+      - run: shellcheck -e SC1090,SC1091 ct/*.sh install/*.sh

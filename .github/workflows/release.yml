@@ -52,6 +52,13 @@ jobs:
           CC_aarch64_unknown_linux_musl: musl-gcc
         run: cargo build --release --locked --target ${{ matrix.target }}
 
+      # Each runner builds for its own architecture, so the bridge can be run.
+      - name: See that the bridge starts
+        run: |
+          said="$("server/target/${{ matrix.target }}/release/proxmox-crt" --version)"
+          echo "$said"
+          [[ "$said" == "proxmox-crt ${GITHUB_REF_NAME#v}" ]]
+
       - name: Package
         run: |
           dir="proxmox-crt-linux-${{ matrix.arch }}"
