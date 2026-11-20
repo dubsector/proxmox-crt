@@ -83,10 +83,12 @@ itself from then on.
 The installs and updates take the latest release, so a change on `main`
 reaches containers only once it is released:
 
-1. Raise `version` in `server/Cargo.toml` and `package.json` (and run
+1. Move what is under "Unreleased" in `CHANGELOG.md` to a heading for the
+   new version.
+2. Raise `version` in `server/Cargo.toml` and `package.json` (and run
    `cargo update -p proxmox-crt --offline` in `server/` and `npm install
    --package-lock-only`, so the lock files carry it too). Merge that.
-2. Tag the merge commit with the same version and push the tag:
+3. Tag the merge commit with the same version and push the tag:
 
    ```sh
    git tag v0.4.0
@@ -94,7 +96,8 @@ reaches containers only once it is released:
    ```
 
 `.github/workflows/release.yml` checks the tag against both versions, builds
-the bridge for amd64 and arm64 (static musl binaries) and the page, and
+the bridge for amd64 and arm64 (static musl binaries) and the page, runs each
+bridge once to see that it starts and says the tag's version, and
 publishes `proxmox-crt-linux-amd64.tar.gz`, `proxmox-crt-linux-arm64.tar.gz`
 and `SHA256SUMS` as the release. It takes a few minutes; until it finishes,
 `update` still sees the previous release.
@@ -148,17 +151,18 @@ systemctl start proxmox-crt
 To serve on another address, set `listen` in the settings file, or add
 `--listen` to `ExecStart` with `systemctl edit proxmox-crt`.
 
-## Not tested yet
+## What has been tested
 
-The install has run from a checkout on a Proxmox VE 9.2 host, into a Debian
-13 container, through to the setup card and a console. The rest has not:
+The install has run on a Proxmox VE 9.2 host, into a Debian 13 container,
+through to the setup card and a console. The release workflow has run on
+GitHub's runners for both architectures (v0.3.0), and the amd64 release
+checks against its `SHA256SUMS` and serves the page. The scripts pass
+shellcheck, which the build check runs on every change.
 
-- **The releases:** the first tag, the release workflow on GitHub's runners
-  (the amd64 build and the unpack into a running install were tried locally;
-  the arm64 runner was not), and an install and an `update` from a release in
-  a real container.
-- **The update:** release a new version, run `update`, see it serving and
-  the settings kept.
+Not tested yet:
+
+- **The update from one release to the next:** release a new version, run
+  `update`, see it serving and the settings kept.
 - **The hardening in an unprivileged container.** `ProtectSystem=strict`,
   `PrivateDevices` and the others need mount namespaces, which an unprivileged
   LXC only has with nesting on (the community-scripts default). If the service
@@ -171,7 +175,6 @@ The install has run from a checkout on a Proxmox VE 9.2 host, into a Debian
   `/root/.proxmox-crt` until a run finishes, so the next `update` tries again.
 - **arm64.** A release is built for it but none has run, so `var_arm64` is
   left unset and the user is asked.
-- **shellcheck** was not available where the scripts were written.
 
 Where the scripts depart from the community-scripts guide, which a reviewer
 will ask about:
