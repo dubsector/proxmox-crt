@@ -68,8 +68,9 @@ B.DENSITY = (
     ("NameplateText", 2.0), ("Nameplate", 2.0), ("Collar", 1.2), ("PowerButton", 1.2),
     ("Housing", 0.8), ("Plinth", 0.8), ("SideControls", 0.8), ("RearDetails", 0.3),
     ("Key_", 1.25), ("LegendStrip", 1.3), ("Kbd_Feet", 0.3), ("Kbd_", 1.0), ("Keyboard", 1.0),
-    ("Desk_Top", 0.7), ("Desk_Body", 0.4), ("Desk_Plates", 1.6), ("Switcher_Box", 1.6), ("Node_Plinth", 1.2),
-    ("Lava_Metal", 1.6), ("Cord_", 0.8), ("Lamp_", 1.3), ("Mug", 2.0), ("Logbook", 1.4), ("Headset", 1.4),
+    ("Desk_Top", 0.7), ("Desk_Body", 0.4), ("Switcher_", 1.6), ("Keypad_Case", 1.6), ("Pad_", 1.8), ("Dial_", 1.6),
+    ("Node_Console", 1.2), ("Node_Plate", 1.6), ("Node_Set_", 1.8),
+    ("Lava_Metal", 1.6), ("Cord_", 0.8), ("Lamp_", 1.3), ("Mug", 2.0), ("Logbook", 1.4),
     ("Wall_Sets", 1.6), ("Wall_Rack", 0.9), ("Machine_", 1.4), ("Rack_", 1.4), ("Board_", 1.2),
     ("Room_Floor", 0.5), ("Room_Ceiling", 0.25), ("Room_Wall", 0.5), ("Room_Back", 0.5), ("Room_", 0.5),
 )
@@ -77,7 +78,8 @@ B.SMOOTH = (
     ("Key_", 1.0), ("Collar", 1.0), ("Keyboard", 1.0), ("Housing", 1.0), ("Plinth", 1.0),
     ("SideControls", 1.0), ("PowerButton", 1.0),
     ("Room_", 3.0), ("Wall_Rack", 2.0), ("Machine_", 1.5), ("Rack_", 1.5), ("Board_", 1.5), ("Wall_Sets", 1.0),
-    ("Desk_Body", 1.5), ("Lamp_", 1.0), ("Node_Plinth", 1.0),
+    ("Desk_Body", 1.5), ("Lamp_", 1.0), ("Node_", 1.0), ("Pad_", 1.0), ("Switcher_", 1.0), ("Keypad_Case", 1.0),
+    ("Dial_", 1.0),
 )
 B.SMOOTH_REST = 0.5
 
@@ -112,7 +114,8 @@ def views():
 
 
 # Kept whole (never trimmed): small moving or recoloured parts.
-KEEP_ALL = ("PowerButton", "PowerLED", "Nameplate", "Kbd_LED_")
+KEEP_ALL = ("PowerButton", "PowerLED", "Nameplate", "Kbd_LED_", "Node_Set_", "Pad_", "Dial_Knob", "Switcher_Guard",
+            "Switcher_Lever")
 
 
 def look_material(name, maps):
@@ -219,11 +222,14 @@ def main():
     groups = {"hero": hero_all, "desk": desk_all, "room": room_all}
 
     # ---------------------------------------------------------- intersections
+    def named(*prefixes):
+        return [o for o in desk_all if o.name.startswith(prefixes)]
+
     bad = B.check_intersections(
         {"keyboard": [kb] + K["keys"] + [K["LegendStrip"]] + K["leds"] + K["parts"],
          "terminal": T["body"] + [T["PowerButton"], T["PowerLED"], glass],
-         "plinth": [bpy.data.objects["Node_Plinth"]], "plates": [bpy.data.objects["Desk_Plates"]],
-         "switcher": [bpy.data.objects["Switcher_Box"]], "props": O["props"], "lamp": O["lamp"] + [bulb]},
+         "console": named("Node_"), "selector": named("Keypad_Case", "Pad_", "Dial_"),
+         "switcher": named("Switcher_"), "props": O["props"], "lamp": O["lamp"] + [bulb]},
         set())
     report["intersections"] = bad
     log("INTERSECTIONS", bad if bad else "none")
@@ -515,7 +521,7 @@ def main():
     if "--no-export" not in args:
         plain = bpy.data.materials.new("Baked")
         plain.use_backface_culling = True
-        legend_users = set(K["keys"]) | {K["LegendStrip"]}
+        legend_users = set(K["keys"]) | {K["LegendStrip"]} | set(o for o in keep_objs if "decals" in o)
         for o in keep_objs:
             B.set_single_material(o, plain)
             o.data.name = o.name

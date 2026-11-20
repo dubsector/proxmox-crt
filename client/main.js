@@ -472,7 +472,10 @@ function isCopy(ev) {
 }
 
 function demo() {
-  return createDemoSource({ guests: params.has("guests") ? Math.max(0, parseInt(params.get("guests"), 10) || 0) : 48 });
+  return createDemoSource({
+    guests: params.has("guests") ? Math.max(0, parseInt(params.get("guests"), 10) || 0) : 48,
+    nodes: params.has("nodes") ? Math.min(Math.max(1, parseInt(params.get("nodes"), 10) || 1), 4) : undefined,
+  });
 }
 
 function bridge() {

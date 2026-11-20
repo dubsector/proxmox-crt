@@ -35,17 +35,19 @@ version is in the [README](../README.md#controls).
   (F11 is Escape, as its cap says). Shift, Ctrl and Compose (Alt) wait for
   the key clicked next, Lock stays on until it is clicked again, and the
   numpad is the switcher's, as yours is. A
-  lava lamp; and what a shift leaves lying about: a logbook and pen, a mug,
-  a headset and a desk lamp, which is terminal's own. Each lamp has a switch
+  lava lamp; and what a shift leaves lying about: a logbook and pen, a mug
+  and a desk lamp, which is terminal's own. Each lamp has a switch
   in its cord on the desk: click the switch to turn it on or off. The lava
   lamp's light goes out at once, but its wax goes by its heat: it sinks and settles over a couple of minutes, and takes a minute to
   get going again.
-- A strip of small node monitors between the terminal and its keyboard, one
-  per node (up to four), with each node's CPU, memory and guest count. They
-  come into view when you look down at the desk; nothing selects them.
+- A console of small node monitors between the terminal and its keyboard,
+  one per node (up to four), with each node's CPU, memory and guest count.
+  The console holds three sets; with fewer nodes the spare ones stay dark,
+  and a fourth node makes all of them smaller. They come into view when you
+  look down at the desk; nothing selects them.
 - The switcher on the desk: a box beside the terminal with a two-digit
   readout of the selected monitor and a lamp for that guest's power (green
-  running, red stopped); a keypad that can be clicked and lights as the real
+  running, red stopped); a keypad that can be clicked and whose keys go down as the real
   numpad is typed; and a dial beside the keypad, turned by clicking either half of
   it or with the mouse wheel over it, that steps to the next or previous monitor.
   They are to the right of the terminal.
@@ -66,10 +68,9 @@ version is in the [README](../README.md#controls).
 - Zoom: the mouse wheel closes in on whatever is under the pointer and backs
   off again, anywhere but over the desk terminal's screen and the dial. It
   stays closed in while monitors are picked.
-- Lock: the LOCK ON TARGET button on the desk, Scroll Lock, numpad `/` or a
-  click on the terminal's case brings the view in close to the terminal's
-  screen and holds it still; the same again lets go, and so does a right
-  click.
+- Lock: Scroll Lock, numpad `/` or a click on the terminal's case brings the
+  view in close to the terminal's screen and holds it still; the same again
+  lets go, and so does a right click.
 - Power: the push button under the desk terminal's screen switches the
   terminal off and on, as a real monitor's does: the picture folds to a line
   and a fading dot, and comes back after the tube warms up. The green lamp

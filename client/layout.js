@@ -6,6 +6,7 @@
 // and bake the room (tools/blender/), so the baked shell and the live parts
 // in front of it cannot drift apart.
 import { CABINET } from "./gl/bank.js";
+import { KEYPAD, KEY_PITCH, KEY_SIZE } from "./gl/controls.js";
 import { MACHINE } from "./gl/machines.js";
 import { PANEL } from "./gl/panels.js";
 
@@ -30,14 +31,20 @@ export var DESK_Y = -2.739;
 export var DESK = { halfW: 17, back: -7.6, front: 7.2 };
 // The floor.
 export var FLOOR_Y = -16;
-// The node monitors' strip above the keyboard: how big its sets are, how
-// far in front of the terminal they sit, and how far they lie back.
+// The node monitors' console above the keyboard: how big its sets are, how
+// far in front of the terminal they sit, how far they lie back, and how far
+// above the desk the lowest edge of a set is.
 export var SIDE_SCALE = 0.34;
-export var SIDE_GAP = 0.14;
-export var SIDE_Z = 2.9;
+export var SIDE_GAP = 0.08;
+export var SIDE_Z = 3.0;
 export var SIDE_LEAN = 1.0;
-// Half the width of the sloped console they sit in: three sets at their
-// size. A fourth node makes all of them smaller (see nodeSetScale).
+export var SIDE_LIFT = 0.17;
+// The console always holds this many sets, in a bay of its face plate; with
+// fewer nodes the spare ones stay dark, as the wall's do. A fourth node
+// makes all of them smaller (see nodeSetScale).
+export var NODE_SETS = 3;
+export var NODE_BAY_MARGIN = 0.04;
+// Half the width of the console.
 export var NODE_PLINTH_HALF_W = 2.98;
 // The cabinets under the wall: how many stand either side of the middle.
 // They run right across, behind the terminal too, so the wall is not bare
@@ -143,20 +150,31 @@ export function officeLayout() {
     signs: { y: rackTop + 1.35, z: WALL_Z + 0.2, width: (sideWallX + PANEL.depth) * 2, height: 2 },
     // Node monitors: a strip of small sets in a sloped panel between the
     // terminal and its keyboard.
-    nodeStrip: { scale: SIDE_SCALE, gap: SIDE_GAP, z: SIDE_Z, lean: SIDE_LEAN, setW: CABINET.halfW * 2 * SIDE_SCALE, halfW: NODE_PLINTH_HALF_W },
+    nodeStrip: {
+      scale: SIDE_SCALE,
+      gap: SIDE_GAP,
+      z: SIDE_Z,
+      lean: SIDE_LEAN,
+      lift: SIDE_LIFT,
+      setW: CABINET.halfW * 2 * SIDE_SCALE,
+      halfW: NODE_PLINTH_HALF_W,
+      bayHalfW: nodeBayHalfW(),
+      bayMargin: NODE_BAY_MARGIN,
+      // Where the console's own sets are: the model has these.
+      sets: nodeSetPlaces(NODE_SETS),
+    },
     // The switcher: its box beside the terminal, where the seat can read it,
-    // and the keypad and dial on the desk to the right of the node monitors.
+    // and the keypad and dial, in one case on the desk to the right of the
+    // node monitors.
     controls: {
       box: { x: 5.2, z: -2.4, turn: -0.3 },
-      keypad: { x: 4.45, z: 1.5 },
-      dial: { x: 7.35, z: 1.5 },
-      lock: { x: -4.3, z: 1.9, turn: 0.12, scale: 0.45 },
+      keypad: { x: 4.75, z: 2.0, pitch: KEY_PITCH, size: KEY_SIZE, keys: KEYPAD },
+      dial: { x: 7.2, z: 2.0 },
     },
     lavaLamp: { x: -5.4, z: -2.2 },
     props: {
       logbook: { x: -7.2, z: 3.4, turn: 0.22 },
       mug: { x: -9.6, z: 1.2 },
-      headset: { x: 10.4, z: 3.6, turn: -0.5 },
       lamp: { x: 14.6, z: -1.6, turn: 3.75 },
     },
     // Each lamp's cord: from its base to the switch lying on the desk, and
@@ -195,9 +213,41 @@ export function officeLayout() {
   };
 }
 
-// How big each node monitor is for this many nodes: SIDE_SCALE while they
-// fit the console, smaller when they do not.
+// Half the width of the bay the node monitors sit in.
+function nodeBayHalfW() {
+  return (NODE_SETS * (CABINET.halfW * 2 * SIDE_SCALE + SIDE_GAP) - SIDE_GAP) / 2 + NODE_BAY_MARGIN;
+}
+
+// How big each node monitor is for this many nodes: SIDE_SCALE for the
+// console's own number of sets, smaller when there are more.
 export function nodeSetScale(count) {
-  var fit = (2 * NODE_PLINTH_HALF_W - 0.3 - SIDE_GAP) / Math.max(count, 1) - SIDE_GAP;
+  var fit = (2 * (nodeBayHalfW() - NODE_BAY_MARGIN) + SIDE_GAP) / Math.max(count, NODE_SETS) - SIDE_GAP;
   return Math.min(SIDE_SCALE, fit / (CABINET.halfW * 2));
+}
+
+// Where each of `count` node monitors' tube faces is, left to right, and
+// how big: [{ x, y, z, scale }]. Smaller sets stay in the middle of the
+// bay's height.
+export function nodeSetPlaces(count) {
+  var scale = nodeSetScale(count);
+  var setW = CABINET.halfW * 2 * scale;
+  var rowW = count * (setW + SIDE_GAP) - SIDE_GAP;
+  // Up the slope, in the page's y and z.
+  var up = [Math.cos(SIDE_LEAN), -Math.sin(SIDE_LEAN)];
+  // The face's centre is this far up the slope from the set's lowest edge
+  // at full size; a smaller set keeps the middle of its case where a full
+  // one has it.
+  var middle = (CABINET.top + CABINET.bottom) / 2;
+  var rise = -CABINET.bottom * SIDE_SCALE + middle * (SIDE_SCALE - scale);
+  var places = [];
+  for (var n = 0; n < count; n++) {
+    places.push({ x: -rowW / 2 + setW / 2 + n * (setW + SIDE_GAP), y: DESK_Y + SIDE_LIFT + rise * up[0], z: SIDE_Z + rise * up[1], scale: scale });
+  }
+  return places;
+}
+
+// Which of the console's sets node `n` of `count` (from 0) shows on: left
+// to right, but a lone node takes the middle one.
+export function nodeSetFor(n, count) {
+  return count === 1 ? Math.floor(NODE_SETS / 2) : n;
 }

@@ -505,11 +505,34 @@
  },
  "nodeStrip": {
   "scale": 0.34,
-  "gap": 0.14,
-  "z": 2.9,
+  "gap": 0.08,
+  "z": 3,
   "lean": 1,
+  "lift": 0.17,
   "setW": 1.7000000000000002,
-  "halfW": 2.98
+  "halfW": 2.98,
+  "bayHalfW": 2.6700000000000004,
+  "bayMargin": 0.04,
+  "sets": [
+   {
+    "x": -1.7800000000000002,
+    "y": -2.1648538752106314,
+    "z": 2.3705797033636933,
+    "scale": 0.34
+   },
+   {
+    "x": 0,
+    "y": -2.1648538752106314,
+    "z": 2.3705797033636933,
+    "scale": 0.34
+   },
+   {
+    "x": 1.7800000000000002,
+    "y": -2.1648538752106314,
+    "z": 2.3705797033636933,
+    "scale": 0.34
+   }
+  ]
  },
  "controls": {
   "box": {
@@ -518,18 +541,142 @@
    "turn": -0.3
   },
   "keypad": {
-   "x": 4.45,
-   "z": 1.5
+   "x": 4.75,
+   "z": 2,
+   "pitch": 0.58,
+   "size": 0.5,
+   "keys": [
+    {
+     "code": "Numpad7",
+     "col": 0,
+     "row": 0,
+     "w": 1,
+     "h": 1,
+     "legend": "7",
+     "tone": "cream"
+    },
+    {
+     "code": "Numpad8",
+     "col": 1,
+     "row": 0,
+     "w": 1,
+     "h": 1,
+     "legend": "8",
+     "tone": "cream"
+    },
+    {
+     "code": "Numpad9",
+     "col": 2,
+     "row": 0,
+     "w": 1,
+     "h": 1,
+     "legend": "9",
+     "tone": "cream"
+    },
+    {
+     "code": "NumpadSubtract",
+     "col": 3,
+     "row": 0,
+     "w": 1,
+     "h": 1,
+     "legend": "−",
+     "tone": "grey"
+    },
+    {
+     "code": "Numpad4",
+     "col": 0,
+     "row": 1,
+     "w": 1,
+     "h": 1,
+     "legend": "4",
+     "tone": "cream"
+    },
+    {
+     "code": "Numpad5",
+     "col": 1,
+     "row": 1,
+     "w": 1,
+     "h": 1,
+     "legend": "5",
+     "tone": "cream"
+    },
+    {
+     "code": "Numpad6",
+     "col": 2,
+     "row": 1,
+     "w": 1,
+     "h": 1,
+     "legend": "6",
+     "tone": "cream"
+    },
+    {
+     "code": "NumpadAdd",
+     "col": 3,
+     "row": 1,
+     "w": 1,
+     "h": 1,
+     "legend": "+",
+     "tone": "grey"
+    },
+    {
+     "code": "Numpad1",
+     "col": 0,
+     "row": 2,
+     "w": 1,
+     "h": 1,
+     "legend": "1",
+     "tone": "cream"
+    },
+    {
+     "code": "Numpad2",
+     "col": 1,
+     "row": 2,
+     "w": 1,
+     "h": 1,
+     "legend": "2",
+     "tone": "cream"
+    },
+    {
+     "code": "Numpad3",
+     "col": 2,
+     "row": 2,
+     "w": 1,
+     "h": 1,
+     "legend": "3",
+     "tone": "cream"
+    },
+    {
+     "code": "NumpadEnter",
+     "col": 3,
+     "row": 2,
+     "w": 1,
+     "h": 2,
+     "legend": "↵",
+     "tone": "grey"
+    },
+    {
+     "code": "Numpad0",
+     "col": 0,
+     "row": 3,
+     "w": 2,
+     "h": 1,
+     "legend": "0",
+     "tone": "cream"
+    },
+    {
+     "code": "NumpadDecimal",
+     "col": 2,
+     "row": 3,
+     "w": 1,
+     "h": 1,
+     "legend": ".",
+     "tone": "cream"
+    }
+   ]
   },
   "dial": {
-   "x": 7.35,
-   "z": 1.5
-  },
-  "lock": {
-   "x": -4.3,
-   "z": 1.9,
-   "turn": 0.12,
-   "scale": 0.45
+   "x": 7.2,
+   "z": 2
   }
  },
  "lavaLamp": {
@@ -545,11 +692,6 @@
   "mug": {
    "x": -9.6,
    "z": 1.2
-  },
-  "headset": {
-   "x": 10.4,
-   "z": 3.6,
-   "turn": -0.5
   },
   "lamp": {
    "x": 14.6,

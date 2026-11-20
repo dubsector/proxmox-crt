@@ -37,16 +37,22 @@ tube centre stands 166.97 mm above its desk).
 Only what neither moves nor lights up: the room's shell and ceiling lights,
 the rack of the monitor wall and every set's case, the cabinets under the
 wall, the racks, the big boards' frames and the signs' housing, the desk,
-the node monitors' sloped console, the switcher box, the keypad's base, the
-dial's plate and ticks, the lock button's base, the lava lamp's metal, the
-lamps' cords, the logbook, mug, headset and desk lamp, and terminal's own
+the node monitors' console and its face plate, the switcher box, the keypad's
+case, the dial's plate and scale, the lava lamp's metal, the
+lamps' cords, the logbook, mug and desk lamp, and terminal's own
 terminal and keyboard.
 
 What moves or lights up stays live in three.js, standing just in front of
 those surfaces: every tube face, the cabinets' lamps and reels, the racks'
 clocks, lamps, meters and scopes, the boards' charts and the signs, the
-keypad's keys, the dial's knob, the guard and switch, the readout, the cord
-switches, the lava lamp's glass and wax. Each live module keeps its own plain
+readout and the power lamp, the cord switches, the lava lamp's glass and wax.
+
+The desk gear's moving parts are modelled and baked too, each as an object of
+its own that the page moves about its origin: the keypad's keys, the dial's
+knob, the guard over the power switch and the switch's lever, and each node
+monitor's case (which the page makes smaller and moves when there are four
+nodes). They are never trimmed: a face hidden where the part was baked can
+show once it has moved. Each live module keeps its own plain
 stand-ins for the static parts in `shell`; the page hides them once the
 model is in and keeps them, unseen, to take the clicks they always took.
 
@@ -64,12 +70,23 @@ Objects are found by name; custom properties become glTF `extras`.
 | `Keyboard`, `Key_*`, `LegendStrip`, `Kbd_*` | Terminal's keyboard, its keys and legend strip, exactly as in terminal. Keys dip by `travel` when the real key goes down. |
 | `Wall_Sets` | The 52 sets' cases. A click on one picks that monitor, by where it lands on the wall. |
 | `Lamp_Base`, `Lamp_Arm`, `Lamp_Shade`, `Lamp_ShadeGlow` | Terminal's desk lamp, without its own cord and rocker switch (this desk's lamp has the cord switch drawn by the page). A click switches it. |
+| `Node_Set_<n>` | A node monitor's case, with `node_set` = its place from the left. The page draws the tube's face in its opening. |
+| `Pad_<code>` | A key of the keypad, with `pad` = the key's code and `travel` (m) it goes down by. |
+| `Dial_Knob` | The dial's knob, turned about its vertical. |
+| `Switcher_Guard`, `Switcher_Lever` | The power switch's cover, turned about its hinge (the node's x), and the lever under it, about its pivot. |
 | `Cam_Seat`, `Cam_Target` | The seat and where it looks. |
 | everything else | Static and baked. |
 
 Node properties as in terminal: `atlas` (which atlas the second UV set
 addresses), `role` = `led`, `emissive` (with `emissive`, `emissive_radiance`,
 `emissive_off`) or `backing`.
+
+A node with `decals` has printing on it, which the page draws
+(`client/gl/decals.js`) and multiplies over the baked colour, as it does the
+keyboard's legends: a JSON list of `{ cell, span, text, style, w, h }`, the
+cell of an 8 x 8 sheet the node's first UV set addresses, how many cells of
+the row it takes, and the print's size on the part in millimetres. Style
+`key` is a cap's legend; `plate` is an engraved label, white on black.
 
 ### Atlases and passes
 

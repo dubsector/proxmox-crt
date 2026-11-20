@@ -2,6 +2,7 @@
 // small black bakelite case with the rim of a toothed thumbwheel showing
 // through a slot in it. A
 // click rolls the wheel on a notch, and the lamp is on or off.
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { Group, Mesh, BoxGeometry, CylinderGeometry, ExtrudeGeometry, TubeGeometry, CatmullRomCurve3, Shape, Vector3, MeshStandardMaterial } from "three";
 
 var TEETH = 14;
@@ -47,7 +48,7 @@ export function createCordSwitch(options) {
   var seamMat = new MeshStandardMaterial({ color: 0x050505, roughness: 0.6 });
   var ivory = new MeshStandardMaterial({ color: 0xd8cfae, roughness: 0.5 });
   var steel = new MeshStandardMaterial({ color: 0x9a9995, roughness: 0.3, metalness: 0.7 });
-  var bodyGeo = new BoxGeometry(BODY.w, BODY.h, BODY.l, 1, 1, 1);
+  var bodyGeo = new RoundedBoxGeometry(BODY.w, BODY.h, BODY.l, 3, 0.06);
   var seamGeo = new BoxGeometry(0.012, BODY.h + 0.004, BODY.l + 0.004);
   var rivetGeo = new CylinderGeometry(0.035, 0.035, BODY.w + 0.02, 10);
   var wheelGeo = new ExtrudeGeometry(wheelShape(WHEEL.r, 0.018), { depth: WHEEL.w, bevelEnabled: false, curveSegments: 1 });
