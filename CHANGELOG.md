@@ -11,6 +11,15 @@ What changed in each release, newest first. Containers take a release with
   in place of a spike every ten seconds. The desk's network figures gain the
   same.
 - Node names have more room on the status board.
+- The node monitors sit in a console of their own, each in a moulded bezel
+  let into its face plate, and the switcher box, the keypad and the dial are
+  modelled in the same detail as the terminal, with engraved labels. The
+  keypad's keys, the dial, the guard and the switch under it move as before.
+  The console always holds three sets: with fewer nodes the spare ones stay
+  dark.
+- The LOCK ON TARGET button is gone from the desk. A click on the
+  terminal's case, Scroll Lock or numpad `/` still holds the view on the
+  terminal.
 
 ## 0.4.0 (2026-11-20)
 

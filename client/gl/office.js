@@ -271,7 +271,8 @@ function need(value, what) {
 
 // Dresses the loaded model for drawing, in the page's room space (tube
 // units, the desk terminal's tube centre at the origin, +Y up). `legends`
-// are the textures legends.js drew for the keyboard: { keys, strip }.
+// are the textures legends.js drew for the keyboard, and decals.js for the
+// desk's gear: { keys, strip, decals }.
 export function buildOffice(loaded, legends) {
   var root = loaded.gltf.scene;
   var extras = root.userData || {};
@@ -329,6 +330,8 @@ export function buildOffice(loaded, legends) {
   }
   var plain = {};
   var keyed = null;
+  var printed = {};
+  var pad = {};
   var leds = {};
   var keyNodes = [];
   var meshes = [];
@@ -357,6 +360,9 @@ export function buildOffice(loaded, legends) {
         o.material = keyed;
       } else if (o.name === "LegendStrip") {
         o.material = lit(atlas, legends.strip);
+      } else if (x.decals !== undefined && legends.decals) {
+        printed[atlas] = printed[atlas] || lit(atlas, legends.decals);
+        o.material = printed[atlas];
       } else {
         plain[atlas] = plain[atlas] || lit(atlas, null);
         o.material = plain[atlas];
@@ -364,6 +370,7 @@ export function buildOffice(loaded, legends) {
       meshes.push(o);
     }
     if (x.code !== undefined) keyNodes.push(o);
+    if (x.pad !== undefined) pad[x.pad] = o;
   });
 
   // The keys: each dips by its travel when its code is typed.
@@ -435,6 +442,20 @@ export function buildOffice(loaded, legends) {
     },
     lampParts: lampParts,
     wallSets: byName.Wall_Sets || null,
+    // The node monitors' cases in the console, left to right.
+    nodeSets: Object.keys(byName)
+      .filter(function (n) {
+        return byName[n].userData.node_set !== undefined;
+      })
+      .sort(function (a, b) {
+        return byName[a].userData.node_set - byName[b].userData.node_set;
+      })
+      .map(function (n) {
+        return byName[n];
+      }),
+    // The switcher's moving parts, which controls.js moves: the keypad's
+    // keys by code, the dial's knob, and the power switch's guard and lever.
+    gear: { pad: pad, knob: byName.Dial_Knob || null, guard: byName.Switcher_Guard || null, lever: byName.Switcher_Lever || null },
     // Light levels: 0..1 for the ceiling lights and the desk lamp; the
     // pictures' mean linear radiance (phosphor colour x mean level).
     setRoom: function (level) {

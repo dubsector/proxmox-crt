@@ -1,16 +1,25 @@
 // What the monitors are switched with: the switcher box beside the
 // terminal, with its two-digit readout, a lamp for the selected guest's
 // power and the guarded switch that starts and stops it; a keypad on the
-// desk; a dial; and the lock on target button. Plain shapes, like the rest
-// of the grey-box room. The keypad and dial can be clicked, and they move
-// when the real keyboard does the same thing.
+// desk; and a dial. The keypad and dial can be clicked, and they move when
+// the real keyboard does the same thing.
+//
+// The shapes here are plain, like the rest of the grey-box room. A baked
+// office has its own model of every part (tools/blender/vt_office.py); the
+// parts of it that move are handed to useBaked() and are moved from here,
+// and what is drawn here is then only what lights up: the readout and the
+// power lamp. The plain parts stay, unseen, to take the clicks.
 import {
   Group,
   Mesh,
   BoxGeometry,
   PlaneGeometry,
   CylinderGeometry,
+  CircleGeometry,
+  BufferGeometry,
+  BufferAttribute,
   InstancedMesh,
+  DoubleSide,
   MeshStandardMaterial,
   MeshBasicMaterial,
   CanvasTexture,
@@ -42,8 +51,6 @@ export var SEGMENT_ORDER = "abcdefg";
 
 var LED_ON = new Color(1.0, 0.17, 0.07);
 var LED_OFF = new Color(0.045, 0.008, 0.005);
-var LOCK_ON = new Color(1.0, 0.13, 0.06);
-var LOCK_OFF = new Color(0.3, 0.035, 0.02);
 var KEY_UP = new Color(0.62, 0.6, 0.53);
 var KEY_LIT = new Color(1.0, 0.86, 0.5);
 var POWER = {
@@ -52,21 +59,29 @@ var POWER = {
   none: new Color(0.05, 0.06, 0.05),
 };
 
-// The keypad, far row first, as a numeric pad is laid out. null is a gap.
+// The keypad, as a numeric pad is laid out: each key's column and row (the
+// far row is 0), how many cells it covers, what is printed on it and which
+// of the two colours of cap it has.
 export var KEYPAD = [
-  ["Numpad7", "Numpad8", "Numpad9", "NumpadSubtract"],
-  ["Numpad4", "Numpad5", "Numpad6", "NumpadAdd"],
-  ["Numpad1", "Numpad2", "Numpad3", "NumpadEnter"],
-  ["Numpad0", "NumpadDecimal", null, null],
-];
-var LEGENDS = {
-  NumpadSubtract: "−",
-  NumpadAdd: "+",
-  NumpadEnter: "↵",
-  NumpadDecimal: ".",
-};
-var KEY_PITCH = 0.58;
-var KEY_SIZE = 0.5;
+  { code: "Numpad7", col: 0, row: 0 },
+  { code: "Numpad8", col: 1, row: 0 },
+  { code: "Numpad9", col: 2, row: 0 },
+  { code: "NumpadSubtract", col: 3, row: 0, legend: "−", tone: "grey" },
+  { code: "Numpad4", col: 0, row: 1 },
+  { code: "Numpad5", col: 1, row: 1 },
+  { code: "Numpad6", col: 2, row: 1 },
+  { code: "NumpadAdd", col: 3, row: 1, legend: "+", tone: "grey" },
+  { code: "Numpad1", col: 0, row: 2 },
+  { code: "Numpad2", col: 1, row: 2 },
+  { code: "Numpad3", col: 2, row: 2 },
+  { code: "NumpadEnter", col: 3, row: 2, h: 2, legend: "↵", tone: "grey" },
+  { code: "Numpad0", col: 0, row: 3, w: 2 },
+  { code: "NumpadDecimal", col: 2, row: 3, legend: "." },
+].map(function (k) {
+  return { code: k.code, col: k.col, row: k.row, w: k.w || 1, h: k.h || 1, legend: k.legend || k.code.slice(-1), tone: k.tone || "cream" };
+});
+export var KEY_PITCH = 0.58;
+export var KEY_SIZE = 0.5;
 var KEY_FLASH_S = 0.22;
 // The dial clicks round a twelfth of a turn for each monitor it steps.
 var DIAL_STEP = Math.PI / 6;
@@ -83,43 +98,67 @@ function legendTexture() {
   ctx.font = "bold 38px ui-monospace, Menlo, Consolas, monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  KEYPAD.forEach(function (row, r) {
-    row.forEach(function (code, c) {
-      if (!code) return;
-      ctx.fillText(LEGENDS[code] || code.slice(-1), (c + 0.5) * cell, (r + 0.5) * cell + 2);
-    });
+  KEYPAD.forEach(function (k) {
+    ctx.fillText(k.legend, (k.col + k.w / 2) * cell, (k.row + k.h / 2) * cell + 2);
   });
   var texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
   return texture;
 }
 
-function lockTexture() {
-  if (typeof document === "undefined") return null;
-  var canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 160;
-  var ctx = canvas.getContext("2d");
-  if (!ctx) return null;
-  ctx.fillStyle = "#16181a";
-  ctx.fillRect(0, 0, 512, 160);
-  ctx.strokeStyle = "#d8b21c";
-  ctx.lineWidth = 6;
-  ctx.strokeRect(8, 8, 496, 144);
-  ctx.fillStyle = "#e9e4d2";
-  ctx.font = "bold 58px ui-monospace, Menlo, Consolas, monospace";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("LOCK ON TARGET", 256, 84, 460);
-  var texture = new CanvasTexture(canvas);
-  texture.colorSpace = SRGBColorSpace;
-  texture.anisotropy = 4;
-  return texture;
+// The readout's fourteen segments as one shape: each a bar with pointed
+// ends, leaning a little as these displays do, with a colour of its own.
+function segmentGeometry(digit, origin) {
+  var LEAN = 0.12;
+  var GAP = 0.018;
+  var t = digit.t / 2;
+  var positions = [];
+  function bar(cx, cy, half, upright) {
+    var l = half - GAP;
+    var outline = [
+      [-l, 0],
+      [-l + t, t],
+      [l - t, t],
+      [l, 0],
+      [l - t, -t],
+      [-l + t, -t],
+    ];
+    for (var k = 1; k < 5; k++) {
+      [outline[0], outline[k + 1], outline[k]].forEach(function (p) {
+        var x = cx + (upright ? p[1] : p[0]);
+        var y = cy + (upright ? p[0] : p[1]);
+        positions.push(origin.x + x + y * LEAN, origin.y + y, origin.z);
+      });
+    }
+  }
+  for (var d = 0; d < 2; d++) {
+    var cx = (d - 0.5) * digit.apart;
+    var across = digit.w / 2;
+    var down = digit.h / 4;
+    var where = {
+      a: [0, digit.h / 2, across, false],
+      b: [digit.w / 2, digit.h / 4, down, true],
+      c: [digit.w / 2, -digit.h / 4, down, true],
+      d: [0, -digit.h / 2, across, false],
+      e: [-digit.w / 2, -digit.h / 4, down, true],
+      f: [-digit.w / 2, digit.h / 4, down, true],
+      g: [0, 0, across, false],
+    };
+    for (var s = 0; s < 7; s++) {
+      var seg = where[SEGMENT_ORDER[s]];
+      bar(cx + seg[0], seg[1], seg[2], seg[3]);
+    }
+  }
+  var geometry = new BufferGeometry();
+  geometry.setAttribute("position", new BufferAttribute(new Float32Array(positions), 3));
+  geometry.setAttribute("color", new BufferAttribute(new Float32Array(positions.length), 3));
+  return geometry;
 }
+// Corners of the triangles each segment is made of.
+var SEGMENT_VERTS = 12;
 
 // options: { deskY: height of the desk top, box: { x, z, turn } where the
-// switcher box stands, keypad: { x, z }, dial: { x, z }, lock: { x, z, turn }
-// where the lock on target button is }
+// switcher box stands, keypad: { x, z }, dial: { x, z } }
 export function createControls(options) {
   var group = new Group();
   var owned = [];
@@ -158,37 +197,23 @@ export function createControls(options) {
   shell.push(box(switcher, 2.0, 1.45, 0.06, -0.42, 0.02, BOX.d / 2 + 0.01, dark));
 
   var DIGIT = { w: 0.56, h: 1.0, t: 0.12, apart: 0.86 };
-  var segmentGeometry = new BoxGeometry(1, 1, 0.02);
-  var ledMaterial = new MeshBasicMaterial({ color: 0xffffff });
-  var leds = new InstancedMesh(segmentGeometry, ledMaterial, 14);
-  owned.push(segmentGeometry, ledMaterial);
-  for (var digit = 0; digit < 2; digit++) {
-    var cx = -0.42 + (digit - 0.5) * DIGIT.apart;
-    var across = [DIGIT.w - DIGIT.t, DIGIT.t];
-    var down = [DIGIT.t, DIGIT.h / 2 - DIGIT.t];
-    var where = {
-      a: [0, DIGIT.h / 2, across],
-      g: [0, 0, across],
-      d: [0, -DIGIT.h / 2, across],
-      f: [-DIGIT.w / 2, DIGIT.h / 4, down],
-      b: [DIGIT.w / 2, DIGIT.h / 4, down],
-      e: [-DIGIT.w / 2, -DIGIT.h / 4, down],
-      c: [DIGIT.w / 2, -DIGIT.h / 4, down],
-    };
-    for (var s = 0; s < 7; s++) {
-      var seg = where[SEGMENT_ORDER[s]];
-      at.set(cx + seg[0], 0.02 + seg[1], BOX.d / 2 + 0.05);
-      size.set(seg[2][0], seg[2][1], 1);
-      leds.setMatrixAt(digit * 7 + s, matrix.compose(at, flat, size));
-      leds.setColorAt(digit * 7 + s, LED_OFF);
-    }
+  var segments = segmentGeometry(DIGIT, { x: -0.42, y: 0.02, z: BOX.d / 2 + 0.052 });
+  var ledMaterial = new MeshBasicMaterial({ color: 0xffffff, vertexColors: true, side: DoubleSide });
+  owned.push(segments, ledMaterial);
+  switcher.add(new Mesh(segments, ledMaterial));
+  var segmentColors = segments.getAttribute("color");
+  function lightSegment(index, color) {
+    for (var v = 0; v < SEGMENT_VERTS; v++) segmentColors.setXYZ(index * SEGMENT_VERTS + v, color.r, color.g, color.b);
   }
-  switcher.add(leds);
 
   // The selected guest's power lamp.
   var lampMaterial = new MeshBasicMaterial({ color: POWER.none.clone() });
   owned.push(lampMaterial);
-  box(switcher, 0.34, 0.3, 0.05, 1.12, 0.7, BOX.d / 2 + 0.02, lampMaterial);
+  var lensGeometry = new CircleGeometry(0.1, 24);
+  owned.push(lensGeometry);
+  var lens = new Mesh(lensGeometry, lampMaterial);
+  lens.position.set(1.12, 0.62, BOX.d / 2 + 0.06);
+  switcher.add(lens);
   // The power switch, under a guard that has to be lifted first: a plate,
   // a toggle that is thrown up while the guest runs and down while it is
   // stopped, and the red cover, hinged along its top edge, that swings up
@@ -235,20 +260,15 @@ export function createControls(options) {
     shown = t;
     for (var d = 0; d < 2; d++) {
       var lit = SEGMENTS[t[d]] === undefined ? SEGMENTS["-"] : SEGMENTS[t[d]];
-      for (var s = 0; s < 7; s++) leds.setColorAt(d * 7 + s, lit.indexOf(SEGMENT_ORDER[s]) >= 0 ? LED_ON : LED_OFF);
+      for (var s = 0; s < 7; s++) lightSegment(d * 7 + s, lit.indexOf(SEGMENT_ORDER[s]) >= 0 ? LED_ON : LED_OFF);
     }
-    leds.instanceColor.needsUpdate = true;
+    segmentColors.needsUpdate = true;
     return true;
   }
   setReadout("--");
 
   // --- the keypad ------------------------------------------------------------
-  var codes = [];
-  KEYPAD.forEach(function (row, r) {
-    row.forEach(function (code, c) {
-      if (code) codes.push({ code: code, r: r, c: c });
-    });
-  });
+  var codes = KEYPAD;
   var pad = new Group();
   pad.position.set(options.keypad.x, deskY, options.keypad.z);
   group.add(pad);
@@ -258,23 +278,25 @@ export function createControls(options) {
   var keyMaterial = new MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 });
   var keys = new InstancedMesh(keyGeometry, keyMaterial, codes.length);
   owned.push(keyGeometry, keyMaterial);
-  var one = new Vector3(1, 1, 1);
   var glow = new Float32Array(codes.length);
   var tint = new Color();
   function placeKey(i) {
     var k = codes[i];
-    // A key that was just pressed is down a little.
-    at.set((k.c - 1.5) * KEY_PITCH, 0.32 - 0.07 * glow[i], (k.r - 1.5) * KEY_PITCH);
-    keys.setMatrixAt(i, matrix.compose(at, flat, one));
+    // A key that was just pressed is down a little. One that covers two
+    // cells is as much longer as the gap it bridges.
+    at.set((k.col + k.w / 2 - 2) * KEY_PITCH, 0.32 - 0.07 * glow[i], (k.row + k.h / 2 - 2) * KEY_PITCH);
+    size.set((k.w * KEY_PITCH - (KEY_PITCH - KEY_SIZE)) / KEY_SIZE, 1, (k.h * KEY_PITCH - (KEY_PITCH - KEY_SIZE)) / KEY_SIZE);
+    keys.setMatrixAt(i, matrix.compose(at, flat, size));
     keys.setColorAt(i, tint.copy(KEY_UP).lerp(KEY_LIT, glow[i]));
   }
   for (var k = 0; k < codes.length; k++) placeKey(k);
   pad.add(keys);
   var legends = legendTexture();
+  var sheet = null;
   if (legends) {
     var legendGeometry = new PlaneGeometry(4 * KEY_PITCH, 4 * KEY_PITCH);
     var legendMaterial = new MeshBasicMaterial({ map: legends, transparent: true, depthWrite: false });
-    var sheet = new Mesh(legendGeometry, legendMaterial);
+    sheet = new Mesh(legendGeometry, legendMaterial);
     sheet.rotation.x = -Math.PI / 2;
     sheet.position.y = 0.425;
     pad.add(sheet);
@@ -308,36 +330,20 @@ export function createControls(options) {
   var dialAngle = 0;
   var dialAt = 0;
 
-  // --- the lock on target button -------------------------------------------
-  // A square lit button under a stencilled plate. It glows while the view
-  // is locked on the terminal.
-  var lock = new Group();
-  lock.position.set(options.lock.x, deskY, options.lock.z);
-  lock.rotation.y = options.lock.turn || 0;
-  // A button for a finger, not a fist.
-  lock.scale.setScalar(options.lock.scale || 0.45);
-  group.add(lock);
-  shell.push(box(lock, 2.3, 0.3, 2.6, 0, 0.15, 0, steel));
-  var lockMaterial = new MeshBasicMaterial({ color: LOCK_OFF.clone() });
-  owned.push(lockMaterial);
-  var lockButton = box(lock, 1.3, 0.3, 1.3, 0, 0.42, 0.42, lockMaterial);
-  // Yellow and black, as a thing not to be pressed lightly is edged.
-  var hazard = new MeshStandardMaterial({ color: 0xd8b21c, roughness: 0.6 });
-  owned.push(hazard);
-  shell.push(box(lock, 1.7, 0.04, 1.7, 0, 0.31, 0.42, hazard));
-  shell.push(box(lock, 1.48, 0.05, 1.48, 0, 0.315, 0.42, dark));
-  var lockLabel = lockTexture();
-  if (lockLabel) {
-    var lockLabelGeometry = new PlaneGeometry(2.0, 0.62);
-    var lockLabelMaterial = new MeshBasicMaterial({ map: lockLabel });
-    var plateMesh = new Mesh(lockLabelGeometry, lockLabelMaterial);
-    plateMesh.rotation.x = -Math.PI / 2;
-    plateMesh.position.set(0, 0.305, -0.86);
-    lock.add(plateMesh);
-    owned.push(lockLabelGeometry, lockLabelMaterial, lockLabel);
+  // --- a baked office's own parts ---------------------------------------------
+  // The moving parts of the model, once there is one: { pad: { code: key },
+  // knob, guard, lever }, each a node that is moved as its plain stand-in is.
+  var baked = null;
+  var bakedKeys = [];
+  var turnBy = new Quaternion();
+  var X_AXIS = new Vector3(1, 0, 0);
+  var Y_AXIS = new Vector3(0, 1, 0);
+  function turned(part, axis, angle) {
+    if (part) part.node.quaternion.copy(part.rest).multiply(turnBy.setFromAxisAngle(axis, angle));
   }
-  var lockOn = false;
-  var lockDown = 0;
+  function resting(node) {
+    return node ? { node: node, rest: node.quaternion.clone() } : null;
+  }
 
   var world = new Vector3();
 
@@ -345,7 +351,7 @@ export function createControls(options) {
     group: group,
     shell: shell,
     // What a ray can hit that means something.
-    pickables: [keys, knobMesh, dialPlate, guardMesh, leverMesh, lockButton],
+    pickables: [keys, knobMesh, dialPlate, guardMesh, leverMesh],
     // The key code a hit on one of the pickables stands for: a keypad key,
     // or next and previous for the right and left halves of the dial.
     codeAt: function (hit) {
@@ -354,7 +360,6 @@ export function createControls(options) {
       // what switches the guest.
       if (hit.object === guardMesh) return "Guard";
       if (hit.object === leverMesh) return "Power";
-      if (hit.object === lockButton) return "Lock";
       if (hit.object === knobMesh) return hit.point.x >= dial.getWorldPosition(world).x ? "NumpadAdd" : "NumpadSubtract";
       return null;
     },
@@ -372,13 +377,20 @@ export function createControls(options) {
       var at = thrown || power;
       leverGoal = at === "on" ? -0.6 : at === "off" ? 0.6 : 0;
     },
-    // Lights the lock on target button, or puts it out; either way it
-    // goes down as a pressed button does.
-    setLock: function (on) {
-      if (on === lockOn) return;
-      lockOn = on;
-      lockDown = 1;
-      lockMaterial.color.copy(on ? LOCK_ON : LOCK_OFF);
+    // Hands over a baked office's moving parts (see above), which are
+    // drawn from here on in place of the plain ones.
+    useBaked: function (parts) {
+      baked = { knob: resting(parts.knob), guard: resting(parts.guard), lever: resting(parts.lever) };
+      bakedKeys = codes.map(function (k) {
+        var node = parts.pad[k.code];
+        return node ? { node: node, rest: node.position.y, travel: node.userData.travel || 0 } : null;
+      });
+      [keys, sheet, knob, guard, lever, collar].forEach(function (o) {
+        if (o) o.visible = false;
+      });
+      turned(baked.knob, Y_AXIS, -dialAngle);
+      turned(baked.guard, X_AXIS, guardAngle);
+      turned(baked.lever, X_AXIS, leverAngle);
     },
     // Lifts the power switch's guard, or lets it fall shut.
     setGuard: function (open) {
@@ -407,16 +419,13 @@ export function createControls(options) {
         if (glow[i] <= 0) continue;
         glow[i] = Math.max(0, glow[i] - dt / KEY_FLASH_S);
         placeKey(i);
+        // The model's key goes down at once and comes back up.
+        if (bakedKeys[i]) bakedKeys[i].node.position.y = bakedKeys[i].rest - bakedKeys[i].travel * Math.min(1, glow[i] * 2.5);
         lit = true;
       }
       if (lit) {
         keys.instanceMatrix.needsUpdate = true;
         keys.instanceColor.needsUpdate = true;
-        moving = true;
-      }
-      if (lockDown > 0) {
-        lockDown = still ? 0 : Math.max(0, lockDown - dt / 0.25);
-        lockButton.position.y = 0.42 - 0.1 * lockDown;
         moving = true;
       }
       if (guardAngle !== guardGoal || guardSpeed) {
@@ -433,6 +442,7 @@ export function createControls(options) {
           guardSpeed = 0;
         }
         guard.rotation.x = guardAngle;
+        if (baked) turned(baked.guard, X_AXIS, guardAngle);
         moving = true;
       }
       if (leverAngle !== leverGoal || leverSpeed) {
@@ -444,11 +454,13 @@ export function createControls(options) {
           leverSpeed = 0;
         }
         lever.rotation.x = leverAngle;
+        if (baked) turned(baked.lever, X_AXIS, leverAngle);
         moving = true;
       }
       if (dialAngle !== dialGoal) {
         dialAngle = still || Math.abs(dialGoal - dialAngle) < 0.002 ? dialGoal : dialAngle + (dialGoal - dialAngle) * (1 - Math.exp(-dt / 0.09));
         knob.rotation.y = -dialAngle;
+        if (baked) turned(baked.knob, Y_AXIS, -dialAngle);
         moving = true;
       }
       return moving;
@@ -457,7 +469,6 @@ export function createControls(options) {
       owned.forEach(function (o) {
         o.dispose();
       });
-      leds.dispose();
       keys.dispose();
     },
   };

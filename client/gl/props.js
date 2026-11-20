@@ -1,4 +1,4 @@
-// What a shift leaves on the desk: a logbook and a pen, a mug, a headset
+// What a shift leaves on the desk: a logbook and a pen, a mug
 // and a desk lamp. Plain shapes, like the rest of the grey-box room, but
 // for the lamp, which is the one from terminal; nothing here does anything.
 import { Group, Mesh, BoxGeometry, CylinderGeometry, TorusGeometry, BufferGeometry, BufferAttribute, MeshStandardMaterial, MeshBasicMaterial, PointLight, Color, DoubleSide } from "three";
@@ -21,7 +21,7 @@ function shorts(base64) {
 }
 
 // options: { deskY: height of the desk top, logbook: { x, z, turn },
-// mug: { x, z }, headset: { x, z, turn }, lamp: { x, z, turn } }
+// mug: { x, z }, lamp: { x, z, turn } }
 export function createProps(options) {
   var group = new Group();
   var owned = [];
@@ -72,23 +72,6 @@ export function createProps(options) {
   var handle = part(mug, new TorusGeometry(0.22, 0.05, 8, 20, Math.PI), china, 0.36, 0.42, 0);
   handle.rotation.z = -Math.PI / 2;
 
-  // The headset, lying on its side: two cups, the band between them and
-  // the boom of its microphone.
-  var headset = stand(options.headset);
-  var cup = new CylinderGeometry(0.42, 0.42, 0.26, 20);
-  owned.push(cup);
-  [-0.75, 0.75].forEach(function (side) {
-    var c = new Mesh(cup, black);
-    c.position.set(side, 0.42, 0);
-    c.rotation.z = Math.PI / 2;
-    headset.add(c);
-  });
-  var band = part(headset, new TorusGeometry(0.8, 0.045, 8, 28, Math.PI), steel, 0, 0.42, 0);
-  band.rotation.x = -Math.PI / 2 + 0.25;
-  var boom = part(headset, new CylinderGeometry(0.025, 0.025, 0.9, 8), steel, -0.75, 0.3, 0.45);
-  boom.rotation.x = Math.PI / 2 - 0.3;
-  part(headset, new BoxGeometry(0.12, 0.12, 0.18), black, -0.75, 0.17, 0.9);
-
   // The desk lamp: terminal's own, with its sprung arm, in black enamel.
   // Its head reaches out along the lamp's +X.
   var lamp = stand(options.lamp);
@@ -122,7 +105,7 @@ export function createProps(options) {
   return {
     group: group,
     // Everything but the lamp's light, which a baked room draws for itself.
-    shell: [book, mug, headset].concat(lampMeshes),
+    shell: [book, mug].concat(lampMeshes),
     // What a click over the lamp lands on, and stops at.
     lampPickables: lampMeshes,
     setLamp: function (on) {

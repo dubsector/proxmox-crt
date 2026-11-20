@@ -45,7 +45,8 @@ import { createCordSwitch } from "./gl/cordswitch.js";
 import { officeAvailable, pickMapSize, loadOffice, buildOffice, wallCellAt } from "./gl/office.js";
 import { createCeiling, roomLevel } from "./gl/ceiling.js";
 import { drawLegends } from "./gl/legends.js";
-import { officeLayout, WALL, WALL_SCALE, PITCH_X, PITCH_Y, WALL_Z, WALL_BOTTOM_Y, DESK_Y, DESK, FLOOR_Y, SIDE_GAP, SIDE_Z, SIDE_LEAN, SIDE_RACKS, nodeSetScale } from "./layout.js";
+import { officeLayout, WALL, WALL_SCALE, PITCH_X, PITCH_Y, WALL_Z, WALL_BOTTOM_Y, DESK_Y, DESK, FLOOR_Y, SIDE_SCALE, SIDE_LEAN, SIDE_RACKS, NODE_SETS, nodeSetPlaces, nodeSetFor } from "./layout.js";
+import { drawDecals, decalsOf } from "./gl/decals.js";
 
 // Everything is in tube units (about 61 mm): the desk terminal's tube face
 // is 4 x 3 of them and sits at the origin, facing +Z. Where everything
@@ -125,6 +126,8 @@ export function createScene(options) {
   var wallCount = layout.columns * layout.rows;
   // A cabinet for each node, as far as there are cabinets.
   var nodeCount = Math.min(options.nodes || 0, 4);
+  // The console's sets: its own number of them at least, the spare ones dark.
+  var setCount = Math.max(nodeCount, NODE_SETS);
   var reduced = !!options.reducedMotion;
 
   var canvas = document.createElement("canvas");
@@ -191,7 +194,7 @@ export function createScene(options) {
 
   // --- wall and node monitors ----------------------------------------------
   var bank = createBank({
-    count: wallCount + nodeCount,
+    count: wallCount + setCount,
     width: WALL_W,
     height: WALL_H,
     phosphor: options.phosphor,
@@ -242,22 +245,14 @@ export function createScene(options) {
     return along;
   });
 
-  // Node monitors are a strip of small sets in a sloped panel between the
+  // Node monitors are a row of small sets in a sloped console between the
   // terminal and its keyboard, lying back to face whoever looks down at
   // the keys: there to be glanced at, and nothing selects them.
-  if (nodeCount) {
-    var setScale = nodeSetScale(nodeCount);
-    var sideScale = new Vector3(setScale, setScale, setScale);
-    var setW = CABINET.halfW * 2 * setScale;
-    var rowW = nodeCount * (setW + SIDE_GAP) + SIDE_GAP;
-    var lean = new Quaternion().setFromEuler(new Euler(-SIDE_LEAN, 0, 0));
-    // Each set's face sits on the slope; its cabinet goes down into the panel.
-    var rise = new Vector3(0, -CABINET.bottom * setScale, 0).applyQuaternion(lean);
-    for (var n = 0; n < nodeCount; n++) {
-      var where = new Vector3(-rowW / 2 + SIDE_GAP + setW / 2 + n * (setW + SIDE_GAP), DESK_Y + 0.1, SIDE_Z).add(rise);
-      bank.place(wallCount + n, matrix.compose(where, lean, sideScale));
-    }
-  }
+  var setPlaces = nodeSetPlaces(setCount);
+  var lean = new Quaternion().setFromEuler(new Euler(-SIDE_LEAN, 0, 0));
+  setPlaces.forEach(function (place, n) {
+    bank.place(wallCount + n, matrix.compose(new Vector3(place.x, place.y, place.z), lean, new Vector3(place.scale, place.scale, place.scale)));
+  });
 
   // The switcher: its box beside the terminal, where the seat can read it,
   // and the keypad and dial on the desk to the right of the node monitors.
@@ -266,7 +261,6 @@ export function createScene(options) {
     box: L.controls.box,
     keypad: L.controls.keypad,
     dial: L.controls.dial,
-    lock: L.controls.lock,
   });
   scene.add(controls.group);
 
@@ -279,7 +273,6 @@ export function createScene(options) {
     deskY: DESK_Y,
     logbook: L.props.logbook,
     mug: L.props.mug,
-    headset: L.props.headset,
     lamp: L.props.lamp,
   });
   scene.add(props.group);
@@ -339,6 +332,11 @@ export function createScene(options) {
     });
     var strip = loaded.gltf.scene.getObjectByName("LegendStrip");
     var legends = drawLegends(keyNodes, strip, renderer.capabilities.getMaxAnisotropy());
+    var printedNodes = [];
+    loaded.gltf.scene.traverse(function (o) {
+      if (decalsOf(o).length) printedNodes.push(o);
+    });
+    legends.decals = printedNodes.length ? drawDecals(printedNodes, renderer.capabilities.getMaxAnisotropy()) : null;
     office = buildOffice(loaded, legends);
     office.legends = legends;
     if (Math.abs(office.deskY - DESK_Y) > 0.01) throw new Error("office was baked for a desk at " + office.deskY + ", the page has " + DESK_Y);
@@ -353,7 +351,28 @@ export function createScene(options) {
     // The lava lamp draws its own metal, which a light map cannot show.
     var lavaMetal = office.root.getObjectByName("Lava_Metal");
     if (lavaMetal) lavaMetal.visible = false;
-    for (var i = 0; i < wallCount; i++) bank.hideCabinet(i);
+    // The model has every set's case: the wall's, and the node monitors' in
+    // their console. Those are modelled for the console's own number of
+    // sets; for more, each is made smaller and moved, and the extra ones
+    // are copies.
+    var modelled = office.nodeSets.length > 0;
+    for (var i = 0; i < (modelled ? bank.count : wallCount); i++) bank.hideCabinet(i);
+    setPlaces.forEach(function (place, n) {
+      var node = office.nodeSets[n];
+      var from = L.nodeStrip.sets[Math.min(n, L.nodeStrip.sets.length - 1)];
+      if (!node && modelled) {
+        node = office.nodeSets[office.nodeSets.length - 1].clone();
+        office.nodeSets[0].parent.add(node);
+        from = L.nodeStrip.sets[L.nodeStrip.sets.length - 1];
+        node.position.copy(office.nodeSets[office.nodeSets.length - 1].userData.restAt);
+      }
+      if (!node) return;
+      if (!node.userData.restAt) node.userData.restAt = node.position.clone();
+      // The model's own units, which are metres.
+      node.position.copy(node.userData.restAt).add(new Vector3(place.x - from.x, place.y - from.y, place.z - from.z).multiplyScalar(office.unit));
+      node.scale.setScalar(place.scale / SIDE_SCALE);
+    });
+    controls.useBaked(office.gear);
     // The terminal leans back, as the real one does.
     tube.mesh.quaternion.copy(office.tubeQuaternion);
     tube.mesh.updateMatrixWorld(true);
@@ -598,7 +617,6 @@ export function createScene(options) {
 
   function setDeskLock(on) {
     if (on === deskLock) return;
-    controls.setLock(on);
     deskLock = on;
     wake(1.5);
   }
@@ -1113,7 +1131,7 @@ export function createScene(options) {
     // Puts a 13 x 4 grid on wall monitor `number` (from 1), or node monitor
     // `number` with node: true.
     show: function (number, grid, kind, node) {
-      show((node ? wallCount : 0) + number - 1, grid, kind);
+      show(node ? wallCount + nodeSetFor(number - 1, nodeCount) : number - 1, grid, kind);
     },
     // Puts an 80 x 25 grid on the desk terminal.
     showDesk: showDesk,
@@ -1268,6 +1286,7 @@ export function createScene(options) {
         office.dispose();
         office.legends.keys.dispose();
         office.legends.strip.dispose();
+        if (office.legends.decals) office.legends.decals.dispose();
       }
       renderer.dispose();
     },

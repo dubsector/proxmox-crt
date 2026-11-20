@@ -81,7 +81,7 @@ made-up cluster in the page.
 | Scroll back | Mouse wheel over the desk terminal's screen. |
 | Copy and paste | Drag across the screen to copy, Ctrl+V to paste. |
 | Look around | Move the pointer. A right click holds the view, a double-click goes back to the seat. |
-| Close in | Mouse wheel anywhere else. Scroll Lock or the LOCK ON TARGET button holds the view on the terminal. |
+| Close in | Mouse wheel anywhere else. Scroll Lock or a click on the terminal's case holds the view on the terminal. |
 | Sign-in settings | The button in the bottom left corner. |
 
 ## Security
@@ -137,6 +137,7 @@ Query parameters:
 | `?hud=1` | Draws every frame and shows the frame rate, monitor count and draw calls. |
 | `?demo=1` | The made-up cluster, even where a bridge is serving the page. |
 | `?guests=N` | Size of the made-up cluster (default 48). |
+| `?nodes=N` | How many nodes the made-up cluster has, 1 to 4 (default 3). |
 | `?motion=0` | No power-on and view animations, as with the browser's reduced-motion setting. |
 
 ## Layout
@@ -154,7 +155,7 @@ Query parameters:
 | `client/keymap.js` | What a click on a key of the desk's keyboard sends to the console. |
 | `client/gl/panels.js` | The racks beside the wall: clocks, status lamps, meters, scopes. |
 | `client/gl/lavalamp.js` | The lava lamp. |
-| `client/gl/props.js` | The logbook, mug, headset and desk lamp. |
+| `client/gl/props.js` | The logbook, mug and desk lamp. |
 | `client/gl/lamp-model.js` | The desk lamp's shape, taken from terminal's scene by `tools/extract-lamp.mjs`. |
 | `client/gl/cordswitch.js` | The rocker switch in a lamp's cord. |
 | `client/gl/boards.js` | The big boards beyond the monitors and the signs along the top. |
