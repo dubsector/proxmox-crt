@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createTelemetry, activity, ago, SIGNS, RACKS, DARK, GREEN, AMBER, RED } from "../client/telemetry.js";
+import { createTelemetry, createRates, activity, ago, SIGNS, RACKS, DARK, GREEN, AMBER, RED } from "../client/telemetry.js";
 import { clockDigits } from "../client/gl/panels.js";
 import { createDemoSource } from "../client/demo.js";
 
@@ -187,4 +187,27 @@ test("small things are said in few characters", function () {
   assert.equal(clockDigits(90061, "dhm"), "010101");
   assert.equal(clockDigits(86400 * 200, "dhm"), "992359");
   assert.equal(clockDigits(86400 + 3661, "day"), "010101");
+});
+
+test("a rate is taken between Proxmox's own updates, and kept until the next", function () {
+  var rates = createRates();
+  // Read every 2 s; the counter moves every 10 s, by 10 000.
+  assert.equal(rates.read("a", 0, { n: 0 }).n, 0);
+  assert.equal(rates.read("a", 2, { n: 0 }).n, 0);
+  assert.equal(rates.read("a", 10, { n: 10000 }).n, 1000);
+  [12, 14, 16, 18].forEach(function (t) {
+    assert.equal(rates.read("a", t, { n: 10000 }).n, 1000, "kept at " + t);
+  });
+  assert.equal(rates.read("a", 20, { n: 30000 }).n, 2000);
+  // Nothing for longer than Proxmox takes: it has stopped.
+  assert.equal(rates.read("a", 48, { n: 30000 }).n, 2000);
+  assert.equal(rates.read("a", 52, { n: 30000 }).n, 0);
+  // A guest that restarts counts from nothing again.
+  assert.equal(rates.read("a", 60, { n: 500 }).n, 0);
+  assert.equal(rates.read("a", 62, { n: 500 }, false).n, 0);
+  assert.equal(rates.read("a", 64, { n: 900 }).n, 200);
+  rates.prune(function () {
+    return false;
+  });
+  assert.equal(rates.read("a", 66, { n: 1900 }).n, 0);
 });

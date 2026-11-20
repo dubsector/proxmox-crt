@@ -11,7 +11,7 @@ import { createConsoles } from "./consoles.js";
 import { openGate, cardOpen } from "./gate.js";
 import { createSecurity } from "./security.js";
 import { keyBytes, MODIFIERS } from "./keymap.js";
-import { createTelemetry } from "./telemetry.js";
+import { createTelemetry, createRates } from "./telemetry.js";
 
 var params = new URLSearchParams(location.search);
 var HUD = params.get("hud") === "1" || window.CRT_HUD === true;
@@ -46,7 +46,7 @@ var room = null;
 var keypad = null;
 var snapshot = null;
 var guests = []; // in wall order: monitor n shows guests[n - 1]
-var previous = {}; // vmid -> { netin, netout, t }
+var netRates = createRates();
 var extras = {}; // vmid -> { history, netin, netout }
 var wallGrid = createGrid(WALL_COLS, WALL_ROWS);
 var deskGrid = createGrid(DESK_COLS, DESK_ROWS);
@@ -62,14 +62,9 @@ function fail(message) {
 function track(snap) {
   snap.guests.forEach(function (g) {
     var e = extras[g.vmid] || (extras[g.vmid] = { history: [], netin: 0, netout: 0 });
-    var p = previous[g.vmid];
-    if (p && snap.t > p.t && g.status === "running") {
-      e.netin = Math.max(0, g.netin - p.netin) / (snap.t - p.t);
-      e.netout = Math.max(0, g.netout - p.netout) / (snap.t - p.t);
-    } else {
-      e.netin = e.netout = 0;
-    }
-    previous[g.vmid] = { netin: g.netin, netout: g.netout, t: snap.t };
+    var now = netRates.read(g.vmid, snap.t, { netin: g.netin || 0, netout: g.netout || 0 }, g.status === "running");
+    e.netin = now.netin;
+    e.netout = now.netout;
     e.history.push(g.status === "running" ? g.cpu : 0);
     if (e.history.length > HISTORY) e.history.shift();
   });

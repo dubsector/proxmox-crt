@@ -56,6 +56,16 @@ var CLOCK_OFF = new Color(0.05, 0.03, 0.008);
 // DARK, GREEN, AMBER and RED).
 var LAMPS = [new Color(0.035, 0.045, 0.04), new Color(0.2, 0.9, 0.35), new Color(1.0, 0.62, 0.1), new Color(1.0, 0.16, 0.08)];
 var SCOPE_POINTS = 96;
+// A scope's beam: how long it takes to cross the screen, how far behind it
+// (in points) the trace has faded most of the way, and how bright the
+// trace stays once it has.
+var SWEEP_S = 4;
+var TRACE_FADE = 14;
+var TRACE_DIM = 0.2;
+// The dark gap just ahead of the beam, in points, where the old trace has
+// been wiped and the new one is yet to be drawn.
+var TRACE_GAP = 5;
+var TRACE = new Color(0x66ff9a);
 // How far a meter's needle swings either side of straight up.
 var METER_SWING = 1.05;
 
@@ -115,7 +125,10 @@ export function createPanels(options) {
   var needleMat = new MeshBasicMaterial({ color: 0x1a0d08 });
   var redMat = new MeshBasicMaterial({ color: 0xc8301c });
   var screenMat = new MeshBasicMaterial({ color: 0x06100a });
-  var traceMat = new LineBasicMaterial({ color: 0x66ff9a });
+  var traceMat = new LineBasicMaterial({ vertexColors: true });
+  var spotMat = new MeshBasicMaterial({ color: 0xd8ffe4 });
+  var spotGeometry = new CircleGeometry(0.055, 12);
+  owned.push(spotMat);
   owned.push(bodyMat, panelMat, faceMat, needleMat, redMat, screenMat, traceMat);
 
   function add(parent, geometry, material, x, y, z) {
@@ -247,10 +260,14 @@ export function createPanels(options) {
       points[p * 3 + 2] = face + 0.08;
     }
     traceGeometry.setAttribute("position", new BufferAttribute(points, 3));
+    traceGeometry.setAttribute("color", new BufferAttribute(new Float32Array(SCOPE_POINTS * 3), 3));
+    // The beam's spot, which a room that keeps still does not show.
+    var spot = add(group, spotGeometry, spotMat, rack.x, scopeY, face + 0.09);
+    spot.visible = false;
     group.add(new Line(traceGeometry, traceMat));
     owned.push(traceGeometry);
 
-    return { needles: needles, trace: traceGeometry, scopeY: scopeY, shown: "", label: label, labelText: null, clock: null, clockAt: 0, scope: null, lampCodes: null };
+    return { needles: needles, trace: traceGeometry, scopeY: scopeY, shown: "", label: label, labelText: null, clock: null, clockAt: 0, scope: null, lampCodes: null, drawn: new Float32Array(SCOPE_POINTS), spot: spot, beam: (i * 37) % SCOPE_POINTS };
   });
 
   // A clock keeps the time of day, or counts on from what it was last
@@ -283,32 +300,63 @@ export function createPanels(options) {
     n.pivot.rotation.z = METER_SWING - Math.max(0, Math.min(1, n.value)) * 2 * METER_SWING;
   }
 
-  // The trace: the readings the scope was given, oldest on the left, from
-  // the bottom of the screen up. With none it lies flat along the bottom.
-  // A trace is never quite steady, unless the room is to keep still.
-  function drawTrace(st, t) {
-    var position = st.trace.getAttribute("position");
-    var half = P.scopeHeight / 2 - 0.35;
-    var given = st.scope;
+  // What the scope was given, at point p: the readings are spread across
+  // as many points as the scope has. With none it is nothing.
+  function given(st, p) {
+    var readings = st.scope;
+    if (!readings || !readings.length) return 0;
+    var at = (p / (SCOPE_POINTS - 1)) * (readings.length - 1);
+    var lo = Math.floor(at);
+    var hi = Math.min(readings.length - 1, lo + 1);
+    return Math.max(0, Math.min(1, readings[lo] + (readings[hi] - readings[lo]) * (at - lo)));
+  }
+  function placePoint(st, p) {
+    st.trace.getAttribute("position").setY(p, st.scopeY + (st.drawn[p] * 1.8 - 0.9) * (P.scopeHeight / 2 - 0.35));
+  }
+  // The whole trace at once, as a room that keeps still shows it.
+  function drawTrace(st) {
+    var color = st.trace.getAttribute("color");
     for (var p = 0; p < SCOPE_POINTS; p++) {
-      var v = 0;
-      if (given && given.length) {
-        // The scope has as many points as it has; the readings are spread
-        // across them.
-        var at = (p / (SCOPE_POINTS - 1)) * (given.length - 1);
-        var lo = Math.floor(at);
-        var hi = Math.min(given.length - 1, lo + 1);
-        v = given[lo] + (given[hi] - given[lo]) * (at - lo);
-      }
-      var shimmer = still ? 0 : Math.sin(p * 1.9 + t * 11) * 0.012;
-      position.setY(p, st.scopeY + (Math.max(0, Math.min(1, v)) * 1.8 - 0.9 + shimmer) * half);
+      st.drawn[p] = given(st, p);
+      placePoint(st, p);
+      color.setXYZ(p, TRACE.r, TRACE.g, TRACE.b);
     }
-    position.needsUpdate = true;
+    st.trace.getAttribute("position").needsUpdate = true;
+    color.needsUpdate = true;
+  }
+  // The beam crosses the screen from left to right, over and over, and
+  // draws the trace as it goes: each point shows what the scope was last
+  // given when the beam last passed it, brightest where it has just been
+  // and fading behind, as a slow phosphor does.
+  function sweep(st, dt) {
+    var before = st.beam;
+    st.beam = (st.beam + (dt / SWEEP_S) * SCOPE_POINTS) % SCOPE_POINTS;
+    var passed = Math.floor(st.beam) - Math.floor(before);
+    if (passed < 0) passed += SCOPE_POINTS;
+    for (var k = 0; k < passed; k++) {
+      var p = (Math.floor(before) + 1 + k) % SCOPE_POINTS;
+      st.drawn[p] = given(st, p);
+      placePoint(st, p);
+    }
+    if (passed) st.trace.getAttribute("position").needsUpdate = true;
+    var color = st.trace.getAttribute("color");
+    for (var q = 0; q < SCOPE_POINTS; q++) {
+      var behind = st.beam - q;
+      if (behind < 0) behind += SCOPE_POINTS;
+      var glow = behind > SCOPE_POINTS - TRACE_GAP ? 0 : TRACE_DIM + (1 - TRACE_DIM) * Math.exp(-behind / TRACE_FADE);
+      color.setXYZ(q, TRACE.r * glow, TRACE.g * glow, TRACE.b * glow);
+    }
+    color.needsUpdate = true;
+    // The spot itself, on the point it has just drawn.
+    var position = st.trace.getAttribute("position");
+    var head = Math.floor(st.beam);
+    st.spot.position.set(position.getX(head), position.getY(head), position.getZ(head) + 0.01);
+    st.spot.visible = true;
   }
 
   setClocks();
   state.forEach(function (st) {
-    drawTrace(st, 0);
+    drawTrace(st);
   });
   lamps.instanceMatrix.needsUpdate = true;
   segments.instanceMatrix.needsUpdate = true;
@@ -357,7 +405,7 @@ export function createPanels(options) {
         }
       });
       st.scope = reading.scope || null;
-      if (still) drawTrace(st, 0);
+      if (still) drawTrace(st);
       setClocks();
     },
     // Moves everything on by dt seconds. True while anything is moving,
@@ -374,7 +422,7 @@ export function createPanels(options) {
           n.value += (goal - n.value) * (1 - Math.exp(-dt / 0.35));
           setNeedle(n);
         });
-        drawTrace(st, time);
+        sweep(st, dt);
       });
       return true;
     },

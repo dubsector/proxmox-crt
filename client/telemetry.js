@@ -33,6 +33,57 @@ export function activity(bytesPerSecond) {
   return clamp01(Math.log10(bytesPerSecond / KB) / 5);
 }
 
+// How long a rate is kept while its counters stand still, in seconds.
+var RATE_HOLD_S = 30;
+
+// Rates from counters that only ever go up, such as a guest's bytes in and
+// out. Proxmox brings its counters up to date every ten seconds or so, and
+// the cluster is read more often than that: between two of its updates a
+// counter stands still, and the difference from one reading to the next
+// would be nothing, nothing, nothing, then everything at once. So a rate is
+// taken from one change of the counters to the next, and kept in between.
+export function createRates() {
+  var kept = {}; // key -> { t, counters, rates }
+  return {
+    // The rates for `key`, in units a second: { name: rate } for each of
+    // `counters` ({ name: count }) at time `t`. With `live` false (a guest
+    // that is not running) there are none, and counting starts afresh.
+    read: function (key, t, counters, live) {
+      var names = Object.keys(counters);
+      var was = kept[key];
+      var zero = {};
+      names.forEach(function (name) {
+        zero[name] = 0;
+      });
+      if (!was || live === false || !(t > was.t)) {
+        if (!was || live === false) kept[key] = { t: t, counters: counters, rates: zero };
+        return was && live !== false ? was.rates : zero;
+      }
+      var changed = names.some(function (name) {
+        return counters[name] !== was.counters[name];
+      });
+      if (changed) {
+        var rates = {};
+        names.forEach(function (name) {
+          // A counter that went down was reset: the guest restarted.
+          rates[name] = Math.max(0, counters[name] - (was.counters[name] || 0)) / (t - was.t);
+        });
+        kept[key] = { t: t, counters: counters, rates: rates };
+        return rates;
+      }
+      // Still for longer than Proxmox takes: nothing is moving.
+      if (t - was.t > RATE_HOLD_S) was.rates = zero;
+      return was.rates;
+    },
+    // Forgets every key `keep(key)` is not true for.
+    prune: function (keep) {
+      Object.keys(kept).forEach(function (key) {
+        if (!keep(key)) delete kept[key];
+      });
+    },
+  };
+}
+
 // A lamp for how full something is.
 function fillLamp(fraction, warn, fault) {
   return fraction >= fault ? RED : fraction >= warn ? AMBER : GREEN;
@@ -69,7 +120,7 @@ export function createTelemetry(options) {
   var machineCount = opts.machines || 16;
   var points = opts.history || 96;
 
-  var before = {}; // vmid -> { t, netin, netout, diskread, diskwrite }
+  var counted = createRates();
   // A rate takes two readings: there is none to plot until the second.
   var readings = 0;
   var traces = {}; // name -> Float32Array of the latest readings
@@ -122,30 +173,20 @@ export function createTelemetry(options) {
       var guestRate = {};
       var seen = {};
       guests.forEach(function (g) {
-        var was = before[g.vmid];
-        var r = { net: 0, disk: 0 };
-        if (was && snap.t > was.t && running(g)) {
-          var dt = snap.t - was.t;
-          var netin = Math.max(0, (g.netin || 0) - was.netin) / dt;
-          var netout = Math.max(0, (g.netout || 0) - was.netout) / dt;
-          var read = Math.max(0, (g.diskread || 0) - was.diskread) / dt;
-          var write = Math.max(0, (g.diskwrite || 0) - was.diskwrite) / dt;
-          rates.netin += netin;
-          rates.netout += netout;
-          rates.read += read;
-          rates.write += write;
-          r.net = netin + netout;
-          r.disk = read + write;
-          var n = byNode[g.node] || (byNode[g.node] = { net: 0, disk: 0 });
-          n.net += r.net;
-          n.disk += r.disk;
-        }
+        var now = counted.read(g.vmid, snap.t, { netin: g.netin || 0, netout: g.netout || 0, read: g.diskread || 0, write: g.diskwrite || 0 }, running(g));
+        rates.netin += now.netin;
+        rates.netout += now.netout;
+        rates.read += now.read;
+        rates.write += now.write;
+        var r = { net: now.netin + now.netout, disk: now.read + now.write };
+        var n = byNode[g.node] || (byNode[g.node] = { net: 0, disk: 0 });
+        n.net += r.net;
+        n.disk += r.disk;
         guestRate[g.vmid] = r;
-        before[g.vmid] = { t: snap.t, netin: g.netin || 0, netout: g.netout || 0, diskread: g.diskread || 0, diskwrite: g.diskwrite || 0 };
         seen[g.vmid] = true;
       });
-      Object.keys(before).forEach(function (vmid) {
-        if (!seen[vmid]) delete before[vmid];
+      counted.prune(function (vmid) {
+        return seen[vmid];
       });
 
       // --- the cluster as a whole ---------------------------------------------

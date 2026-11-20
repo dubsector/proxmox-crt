@@ -142,7 +142,7 @@ function drawStatus(texture, board) {
       // The storage's name, and after it the node whose it is; one they
       // share has none.
       var name = fit(String(s.name).toUpperCase(), 10);
-      var whose = s.node ? " " + fit(String(s.node).toUpperCase(), 5) : "";
+      var whose = s.node ? " " + fit(String(s.node).toUpperCase(), 9) : "";
       var squeeze = Math.min(1, 196 / ctx.measureText(name + whose).width);
       var nameW = ctx.measureText(name).width * squeeze;
       ctx.textAlign = "left";
@@ -169,9 +169,9 @@ function drawStatus(texture, board) {
       ctx.fillStyle = "#5f93a3";
       ctx.fillText(task.ago, 516, y);
       ctx.fillStyle = "#9fd8e8";
-      ctx.fillText(fit(String(task.what).toUpperCase(), 14), 576, y, 250);
+      ctx.fillText(fit(String(task.what).toUpperCase(), 14), 576, y, 214);
       ctx.fillStyle = "#5f93a3";
-      ctx.fillText(fit(String(task.node).toUpperCase(), 5), 826, y, 86);
+      ctx.fillText(fit(String(task.node).toUpperCase(), 9), 800, y, 128);
       ctx.textAlign = "right";
       ctx.fillStyle = STATE_COLORS[task.state] || STATE_COLORS.ok;
       ctx.fillText(task.state === "run" ? "RUN" : task.state === "ok" ? "OK" : "ERR", 982, y);

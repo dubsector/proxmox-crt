@@ -121,7 +121,10 @@ With fewer than four nodes, the side racks left over take a guest's uptime
 (the longest up, the latest started), and show the guests' disk fill,
 network traffic or disk traffic, with meters for the cluster's CPU, memory
 and storage. A scope fills its screen with the largest reading on it, so it
-shows the shape of the last few minutes, not a scale. A clock stops at 99 of
+shows the shape of the last few minutes, not a scale. Its beam scans
+across the screen every four seconds, as an old heart monitor's does: a
+bright spot that wipes a small gap ahead of itself and draws the trace as it
+goes, brightest where it has just been and fading behind. A clock stops at 99 of
 its largest unit.
 
 The signs along the top, left to right. A lit sign is amber, a warning

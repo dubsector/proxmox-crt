@@ -3,6 +3,15 @@
 What changed in each release, newest first. Containers take a release with
 `update`.
 
+## Unreleased
+
+- A scope's trace is drawn by a beam that crosses the screen and fades
+  behind it, in place of a shimmer. Traffic rates are measured between
+  Proxmox's own updates of its counters, so a steady flow draws a steady line
+  in place of a spike every ten seconds. The desk's network figures gain the
+  same.
+- Node names have more room on the status board.
+
 ## 0.4.0 (2026-11-20)
 
 The room shows the cluster.
