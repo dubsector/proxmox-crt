@@ -2174,6 +2174,8 @@ async fn the_feed_carries_readings_of_the_cluster() {
     assert_eq!(tasks[3]["status"], "OK");
     assert_eq!(snapshot["cluster"]["name"], "mock");
     assert_eq!(snapshot["cluster"]["quorate"], true);
+    let time = snapshot["time"].as_f64().unwrap();
+    assert!((0.0..86400.0).contains(&time));
 
     // A guest stopped on the host shows as stopped in a later reading.
     mock.mock.set_running(100, false);

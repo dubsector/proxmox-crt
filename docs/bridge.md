@@ -96,7 +96,7 @@ pveum role modify CRTWall --privs Datastore.Audit --append 1
 
 Besides the nodes and guests, each reading takes the storage from the same
 listing, each node's status (load average, I/O wait, swap), the cluster's
-latest tasks and its quorum. Whatever the token may not read is shown in the
+latest tasks, its quorum and the host's time of day. Whatever the token may not read is shown in the
 room as not known: dark lamps, needles at rest, dashes on a clock.
 
 ## Settings

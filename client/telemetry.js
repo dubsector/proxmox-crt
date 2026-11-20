@@ -227,8 +227,9 @@ export function createTelemetry(options) {
       var racks = [];
       // Left of the monitors: the guests, in the wall's order.
       racks.push({
-        label: "SINCE TASK",
-        clock: since(lastEnded),
+        // The time of day on the host, by its own clock and time zone.
+        label: "PVE TIME",
+        clock: typeof snap.time === "number" ? { seconds: snap.time, ticking: true, form: "day" } : { seconds: null },
         lamps: lamps(guests.map(cpuLamp)),
         meters: nodeMeters(function (n) {
           return n.cpu || 0;

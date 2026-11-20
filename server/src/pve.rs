@@ -326,10 +326,19 @@ impl Client {
                 .iter()
                 .map(|name| async move { self.get(&format!("/nodes/{name}/status"), "reading a node").await.ok() }),
         );
-        let (details, tasks, status) = tokio::join!(
+        // The time of day is the host's own, in its own time zone: any
+        // node that is up can say.
+        let time = async {
+            match online.first() {
+                Some(name) => self.get(&format!("/nodes/{name}/time"), "reading the time").await.ok(),
+                None => None,
+            }
+        };
+        let (details, tasks, status, time) = tokio::join!(
             details,
             self.get("/cluster/tasks", "reading the tasks"),
-            self.get("/cluster/status", "reading the quorum")
+            self.get("/cluster/status", "reading the quorum"),
+            time
         );
 
         let mut nodes = Vec::new();
@@ -437,6 +446,7 @@ impl Client {
                 "storage": storage,
                 "tasks": tasks.ok().map(|t| shown_tasks(&t)),
                 "cluster": status.ok().map(|s| shown_cluster(&s)),
+                "time": time.as_ref().and_then(time_of_day),
             }),
             guests: refs,
         })
@@ -582,6 +592,13 @@ fn shown_cluster(data: &Value) -> Value {
     })
 }
 
+/// Seconds since midnight on the host: Proxmox gives its local time as
+/// seconds since 1970 with its time zone's offset already added.
+fn time_of_day(data: &Value) -> Option<f64> {
+    let local = data.get("localtime").map(number).filter(|t| *t > 0.0)?;
+    Some(local.rem_euclid(86400.0))
+}
+
 /// `9.0.3` from `pve-manager/9.0.3/025864202ebb6109`.
 fn pve_version(text: &str) -> String {
     text.split('/').nth(1).unwrap_or(text).to_string()
@@ -690,6 +707,9 @@ mod tests {
         assert_eq!(three["name"], "lab");
         assert_eq!(three["quorate"], true);
         assert_eq!(pve_version("pve-manager/9.0.3/025864202ebb6109"), "9.0.3");
+        let time = serde_json::json!({ "time": 1_795_000_000u64, "localtime": 86400u64 * 20_000 + 3661, "timezone": "Europe/Dublin" });
+        assert_eq!(time_of_day(&time), Some(3661.0));
+        assert_eq!(time_of_day(&Value::Null), None);
     }
 
     #[test]

@@ -185,6 +185,7 @@ pub async fn start(addr: &str) -> Running {
         .route("/api2/json/cluster/tasks", get(tasks))
         .route("/api2/json/cluster/status", get(cluster_status))
         .route("/api2/json/nodes/{node}/status", get(node_status))
+        .route("/api2/json/nodes/{node}/time", get(node_time))
         .route("/api2/json/nodes/{node}/{kind}/{vmid}/termproxy", post(termproxy))
         .route("/api2/json/nodes/{node}/{kind}/{vmid}/vncwebsocket", get(vncwebsocket))
         .route("/api2/json/nodes/{node}/{kind}/{vmid}/status/{action}", post(power))
@@ -336,6 +337,21 @@ async fn tasks(State(mock): State<Arc<Mock>>, headers: HeaderMap) -> Response {
         { "upid": "UPID:pve3:4", "type": "aptupdate", "id": "", "node": "pve3", "user": "root@pam", "starttime": began - 5 },
     ] }))
     .into_response()
+}
+
+/// A host an hour east of Greenwich.
+async fn node_time(headers: HeaderMap, Path(node): Path<String>) -> Response {
+    if let Err(r) = allowed(&headers) {
+        return r;
+    }
+    if !NODES.contains(&node.as_str()) {
+        return no(StatusCode::INTERNAL_SERVER_ERROR, "no such cluster node");
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    Json(json!({ "data": { "time": now, "localtime": now + 3600, "timezone": "Europe/Berlin" } })).into_response()
 }
 
 async fn cluster_status(headers: HeaderMap) -> Response {

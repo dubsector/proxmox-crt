@@ -32,6 +32,7 @@ function cluster(t) {
       { type: "qmstart", id: "900", node: "pve", start: t - 7300, end: t - 7200, status: "no such VM" },
     ],
     cluster: { name: null, quorate: null },
+    time: 43200 + (t - 1000),
   };
 }
 
@@ -43,7 +44,8 @@ test("each rack shows something of the cluster, and nothing it was not told", fu
 
   // Beside the monitors: guests in the wall's order (stopped red, busy amber).
   assert.deepEqual(Array.from(room.racks[0].lamps.slice(0, 3)), [RED, AMBER, DARK]);
-  assert.deepEqual(room.racks[0].clock, { seconds: 3600, ticking: true, form: "hms" });
+  assert.equal(room.racks[0].label, "PVE TIME");
+  assert.deepEqual(room.racks[0].clock, { seconds: 43210, ticking: true, form: "day" });
   assert.deepEqual(room.racks[0].meters, [0.25, null, null]);
   assert.deepEqual(Array.from(room.racks[1].lamps.slice(0, 2)), [DARK, GREEN]);
   assert.equal(room.racks[1].clock.seconds, 3600);
@@ -118,10 +120,12 @@ test("what the token may not see is shown as not known", function () {
   bare.storage = [];
   bare.tasks = null;
   bare.cluster = null;
+  bare.time = null;
+  assert.equal(createTelemetry().read(bare).racks[0].clock.seconds, null);
   bare.nodes[0].loadavg = null;
   bare.nodes[0].wait = null;
   var room = createTelemetry().read(bare);
-  assert.equal(room.racks[0].clock.seconds, null);
+  assert.equal(room.racks[1].clock.seconds, null);
   assert.equal(room.board.tasks, null);
   assert.deepEqual(room.board.storage, []);
   assert.equal(sign(room, "STORAGE"), "off");
@@ -182,4 +186,5 @@ test("small things are said in few characters", function () {
   assert.equal(clockDigits(3661, "hms"), "010101");
   assert.equal(clockDigits(90061, "dhm"), "010101");
   assert.equal(clockDigits(86400 * 200, "dhm"), "992359");
+  assert.equal(clockDigits(86400 + 3661, "day"), "010101");
 });

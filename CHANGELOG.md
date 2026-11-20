@@ -5,8 +5,8 @@ What changed in each release, newest first. Containers take a release with
 
 ## Unreleased
 
-- Everything in the room now shows the cluster. The racks' clocks count the
-  time since the last task and the last backup and each node's uptime; their
+- Everything in the room now shows the cluster. The racks' clocks show the
+  host's time, the time since the last backup and each node's uptime; their
   lamps are the guests, the storage and the tasks; their meters and scopes
   are CPU, memory, disk, I/O wait, load and traffic. The signs along the top
   light for quorum, nodes, storage, backups and the rest, and turn red for a

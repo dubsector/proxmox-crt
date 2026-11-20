@@ -111,7 +111,7 @@ is shown as not known: a dark lamp, a needle at rest, dashes on a clock.
 
 | Where | Clock | Lamps | Meters | Scope |
 | --- | --- | --- | --- | --- |
-| Rack left of the monitors | Time since the last task finished | One per guest, in the wall's order: green running, amber at 80% CPU or more, red stopped | Each node's CPU | The cluster's CPU |
+| Rack left of the monitors | The time of day on the Proxmox host, by its own clock and time zone | One per guest, in the wall's order: green running, amber at 80% CPU or more, red stopped | Each node's CPU | The cluster's CPU |
 | Rack right of the monitors | Time since the last backup finished | One per guest: its memory, amber from 75%, red from 90% | Each node's memory | Network traffic, in and out |
 | Left corner rack | Local time | A row per storage, lit as far as it is full; amber from 80%, red from 90% | Each node's root disk | Disk traffic, read and written |
 | Right corner rack | GMT | One per task, newest first: green done, amber running, red failed | Each node's I/O wait (full scale is 25%) | Load average against cores |

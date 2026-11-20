@@ -84,10 +84,13 @@ function writeLabel(texture, text) {
   texture.needsUpdate = true;
 }
 
-// The six digits of a count of seconds: hours, minutes and seconds, or
-// days, hours and minutes. Either stops at 99 of its largest.
+// The six digits of a count of seconds: hours, minutes and seconds
+// ("hms", or "day" for a time of day), or days, hours and minutes ("dhm").
+// A count stops at 99 of its largest.
 export function clockDigits(seconds, form) {
   var s = Math.max(0, Math.floor(seconds));
+  // A time of day goes round at midnight.
+  if (form === "day") s %= 86400;
   var parts = form === "dhm" ? [Math.floor(s / 86400), Math.floor(s / 3600) % 24, Math.floor(s / 60) % 60] : [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60];
   if (parts[0] > 99) parts = form === "dhm" ? [99, 23, 59] : [99, 59, 59];
   return two(parts[0]) + two(parts[1]) + two(parts[2]);
@@ -321,7 +324,7 @@ export function createPanels(options) {
     lampCols: P.boardCols,
     scopePoints: SCOPE_POINTS,
     // What rack `i` shows: { label: over its clock, clock: { kind: "gmt" or
-    // "local" } or { seconds, ticking, form: "hms" or "dhm" } (seconds
+    // "local" } or { seconds, ticking, form: "hms", "dhm" or "day" } (seconds
     // null: not known), lamps: a code for each (0 dark, 1 green, 2 amber,
     // 3 red), meters: [0..1, or null for not known], scope: readings 0..1,
     // oldest first }.

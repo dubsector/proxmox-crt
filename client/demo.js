@@ -4,7 +4,8 @@
 // same names, so the rest of the page never knows which one it is talking to.
 //
 //   snapshot = { t, nodes: [node], guests: [guest], storage: [storage],
-//                tasks: [task] or null, cluster: { name, quorate } or null }
+//                tasks: [task] or null, cluster: { name, quorate } or null,
+//                time: seconds since midnight on the host's clock, or null }
 //   node  = { node, status, cpu, maxcpu, mem, maxmem, disk, maxdisk, uptime,
 //             loadavg, wait (0..1 of its time waiting on disks), swap,
 //             maxswap, version }; the last five null where not known
@@ -203,6 +204,13 @@ export function createDemoSource(options) {
     });
   }
 
+  // Seconds since midnight; `clock` stands in for the real one in tests.
+  function hostTime() {
+    if (opts.clock) return opts.clock();
+    var now = new Date();
+    return now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+  }
+
   function snapshot() {
     return {
       t: t,
@@ -231,6 +239,8 @@ export function createDemoSource(options) {
         return { type: job.type, id: job.id, node: job.node, user: job.user, start: job.start, end: job.end, status: job.status };
       }),
       cluster: { name: "demo", quorate: true },
+      // The demo's host keeps the time of whoever is looking at it.
+      time: hostTime(),
       guests: guests.map(function (g) {
         return {
           vmid: g.vmid,

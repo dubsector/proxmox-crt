@@ -12,8 +12,11 @@ test("the demo cluster has the guests asked for, some of them stopped", function
 });
 
 test("the same seed gives the same cluster", function () {
-  var a = createDemoSource({ seed: 9 });
-  var b = createDemoSource({ seed: 9 });
+  function noon() {
+    return 43200;
+  }
+  var a = createDemoSource({ seed: 9, clock: noon });
+  var b = createDemoSource({ seed: 9, clock: noon });
   a.tick(2);
   b.tick(2);
   assert.deepEqual(a.snapshot(), b.snapshot());
