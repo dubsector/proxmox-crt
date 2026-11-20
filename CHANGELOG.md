@@ -3,7 +3,9 @@
 What changed in each release, newest first. Containers take a release with
 `update`.
 
-## Unreleased
+## 0.4.0 (2026-11-20)
+
+The room shows the cluster.
 
 - Everything in the room now shows the cluster. The racks' clocks show the
   host's time, the time since the last backup and each node's uptime; their
